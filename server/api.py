@@ -12,32 +12,27 @@ from typing import List, Dict, Any
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, StreamingResponse, Response
+from fastapi.responses import HTMLResponse, StreamingResponse, Response
 from pydantic import BaseModel
 
-from server.state import TrackingEngineService
 from server.profile_store import UserProfileData
 
 IS_VERCEL = bool(os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"))
 
 app = FastAPI(title="Hands-Free Accessibility System", version="2.0.0")
 
-# Initialize central tracking engine service
-engine = TrackingEngineService()
+# Initialize engine: hardware desktop engine for local PC, CloudDemoEngine for Vercel/serverless
 if not IS_VERCEL:
-    engine.start_background_service()
+    try:
+        from server.state import TrackingEngineService
+        engine = TrackingEngineService()
+        engine.start_background_service()
+    except Exception:
+        from server.cloud_engine import CloudDemoEngine
+        engine = CloudDemoEngine()
 else:
-    # Seed cloud demo telemetry state
-    engine.latest_telemetry.update({
-        "face_detected": True,
-        "yaw": 1.2,
-        "pitch": 0.5,
-        "ear_left": 0.28,
-        "ear_right": 0.28,
-        "fps": 30.0,
-        "active_app_title": "Cloud Demo Preview",
-        "active_app_category": "general"
-    })
+    from server.cloud_engine import CloudDemoEngine
+    engine = CloudDemoEngine()
 
 # Static directory setup
 web_dir = Path(__file__).resolve().parent.parent / "web"
@@ -68,12 +63,13 @@ class ArmRequest(BaseModel):
     armed: bool
 
 
-@app.get("/")
+@app.get("/", response_class=HTMLResponse)
 def serve_index():
     index_file = web_dir / "index.html"
     if index_file.exists():
-        return FileResponse(index_file)
-    return {"message": "Hands-Free Accessibility API is running. UI files not found."}
+        content = index_file.read_text(encoding="utf-8")
+        return HTMLResponse(content=content)
+    return HTMLResponse("<h1>Hands-Free Accessibility API is running. UI files not found.</h1>")
 
 
 def generate_camera_stream():
