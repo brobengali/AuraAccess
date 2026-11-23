@@ -8,6 +8,9 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <!-- MediaPipe FaceMesh for In-Browser Local Processing -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
 </head>
 <body>
 
@@ -89,10 +92,17 @@
       </div>
 
       <!-- Live Camera Video Feed -->
-      <div class="video-stream-container">
-        <img id="liveVideoFeed" src="/video_feed" alt="Live Camera Tracking Feed" class="camera-stream-img">
+      <div class="video-stream-container" id="videoStreamWrapper">
+        <video id="clientVideo" autoplay playsinline muted class="camera-stream-video"></video>
+        <canvas id="trackingCanvas" class="camera-tracking-canvas"></canvas>
         <div class="stream-overlay-badge">
-          <span class="live-dot"></span> LIVE ON-DEVICE STREAM
+          <span class="live-dot"></span> LIVE BROWSER STREAM
+        </div>
+        <div id="cameraPromptOverlay" class="camera-prompt-overlay hidden">
+          <div class="prompt-icon">📷</div>
+          <div class="prompt-title">Webcam Access Requested</div>
+          <div class="prompt-desc">Allow camera access in your browser to enable live hands-free tracking</div>
+          <button id="btnRequestCamera" class="btn btn-primary btn-sm">Allow Camera Access</button>
         </div>
       </div>
 
@@ -541,6 +551,12 @@
         <button id="btnSaveNewProfile" class="btn btn-primary">Create Profile</button>
       </div>
     </div>
+  </div>
+
+  <!-- Floating On-Screen Virtual Cursor for Browser Navigation -->
+  <div id="virtualCursor" class="virtual-cursor">
+    <div class="cursor-dot"></div>
+    <div class="cursor-ring" id="cursorDwellRing"></div>
   </div>
 
   <script src="/static/app.js"></script>

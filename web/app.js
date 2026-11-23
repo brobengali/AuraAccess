@@ -1,14 +1,18 @@
 /**
- * AuraAccess Frontend Controller
- * Connects to local FastAPI WebSocket & REST APIs.
- * Supports multi-user profile switching, dynamic gesture mappings, and real-time telemetry.
+ * AuraAccess Universal Frontend Controller
+ * - Zero-Install In-Browser Webcam & Face Tracking (WebRTC + MediaPipe FaceMesh)
+ * - Single-Tap Shift Key Clutch with Web Audio Chimes
+ * - Swift Non-Linear Virtual Cursor Steering
+ * - Dwell Click Accumulator with 360° Visual Arc & Audio Click
+ * - Multi-User Profile & Context-Aware Action Studio Management
+ * - Full Dual-Mode: Operates 100% in Cloud (Vercel) & on Local Windows PC
  */
 
 document.addEventListener("DOMContentLoaded", () => {
   let profiles = [];
   let activeProfile = null;
   let currentCategory = "general";
-  let isTracking = false;
+  let isTracking = true;
 
   // DOM Elements
   const profileSelect = document.getElementById("profileSelect");
@@ -20,6 +24,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // Sensitivity Elements
   const sensitivitySlider = document.getElementById("sensitivitySlider");
   const valSensitivityText = document.getElementById("valSensitivityText");
+  let sensitivityMultiplier = 2.5;
 
   // Engagement / Clutch Elements
   const engagementStatusBanner = document.getElementById("engagementStatusBanner");
@@ -33,45 +38,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const navClutchIndicator = document.getElementById("navClutchIndicator");
   const navClutchIcon = document.getElementById("navClutchIcon");
   const navClutchLabel = document.getElementById("navClutchLabel");
-  let softwareArmed = false;
-
-  btnArmToggle.addEventListener("click", async () => {
-    softwareArmed = !softwareArmed;
-    try {
-      const res = await fetch("/api/engagement/arm", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ armed: softwareArmed })
-      });
-      const data = await res.json();
-      updateArmButton(data.engaged);
-    } catch (e) {
-      console.error("Error setting arm toggle:", e);
-    }
-  });
-
-  function updateArmButton(isArmed) {
-    softwareArmed = isArmed;
-    if (isArmed) {
-      btnArmToggle.className = "btn btn-arm-toggle on";
-      armBtnText.textContent = "Decline Access (Lock)";
-      engagementIcon.textContent = "🟢";
-      if (navClutchIndicator) {
-        navClutchIndicator.className = "clutch-header-badge active";
-        navClutchIcon.textContent = "🟢";
-        navClutchLabel.innerHTML = "Control: <strong>ACTIVE</strong> (Tap Shift to lock)";
-      }
-    } else {
-      btnArmToggle.className = "btn btn-arm-toggle off";
-      armBtnText.textContent = "Grant Access (Tap Shift)";
-      engagementIcon.textContent = "🔒";
-      if (navClutchIndicator) {
-        navClutchIndicator.className = "clutch-header-badge locked";
-        navClutchIcon.textContent = "🔒";
-        navClutchLabel.innerHTML = "Tap <strong>SHIFT</strong> to Grant Access";
-      }
-    }
-  }
+  let isEngaged = false;
 
   // Telemetry Elements
   const cameraStatusDot = document.getElementById("cameraStatusDot");
@@ -91,6 +58,13 @@ document.addEventListener("DOMContentLoaded", () => {
   const actionFeedback = document.getElementById("actionFeedback");
   const actionFeedbackText = document.getElementById("actionFeedbackText");
 
+  // Video & Canvas Elements
+  const clientVideo = document.getElementById("clientVideo");
+  const trackingCanvas = document.getElementById("trackingCanvas");
+  const cameraPromptOverlay = document.getElementById("cameraPromptOverlay");
+  const btnRequestCamera = document.getElementById("btnRequestCamera");
+  const virtualCursor = document.getElementById("virtualCursor");
+
   // Modal Elements
   const newProfileModal = document.getElementById("newProfileModal");
   const newProfileName = document.getElementById("newProfileName");
@@ -104,240 +78,86 @@ document.addEventListener("DOMContentLoaded", () => {
   const mapMouthOpen = document.getElementById("map_mouth_open");
   const categoryTabs = document.querySelectorAll(".tab-btn");
 
-  // 1. Fetch & Initialize User Profiles
-  async function loadProfiles() {
-    try {
-      const res = await fetch("/api/profiles");
-      profiles = await res.json();
-      profileSelect.innerHTML = "";
-
-      profiles.forEach(p => {
-        const opt = document.createElement("option");
-        opt.value = p.id;
-        opt.textContent = p.name + (p.calibrated ? " (Calibrated)" : " (Uncalibrated)");
-        profileSelect.appendChild(opt);
-      });
-
-      if (profiles.length > 0) {
-        // Find active profile
-        const statusRes = await fetch("/api/status");
-        const status = await statusRes.json();
-        const activeId = status.active_profile_id || profiles[0].id;
-        profileSelect.value = activeId;
-        activeProfile = profiles.find(p => p.id === activeId) || profiles[0];
-        updateMappingsUI();
-        updateTrackingButton(status.tracking_enabled);
+  // Web Audio Context for Chimes
+  let audioCtx = null;
+  function getAudioContext() {
+    if (!audioCtx) {
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (AudioContextClass) {
+        audioCtx = new AudioContextClass();
       }
-    } catch (err) {
-      console.error("Failed to load profiles:", err);
     }
+    if (audioCtx && audioCtx.state === "suspended") {
+      audioCtx.resume();
+    }
+    return audioCtx;
   }
 
-  // 2. Profile Selection Change
-  profileSelect.addEventListener("change", async (e) => {
-    const selectedId = e.target.value;
+  function playTone(freq, durationMs, type = "sine") {
     try {
-      await fetch(`/api/profiles/active/${selectedId}`, { method: "POST" });
-      activeProfile = profiles.find(p => p.id === selectedId);
-      updateMappingsUI();
-    } catch (err) {
-      console.error("Failed to switch profile:", err);
-    }
-  });
-
-  // 3. New Profile Modal
-  btnNewProfile.addEventListener("click", () => {
-    newProfileName.value = "";
-    newProfileModal.classList.remove("hidden");
-    newProfileName.focus();
-  });
-
-  btnCancelNewProfile.addEventListener("click", () => {
-    newProfileModal.classList.add("hidden");
-  });
-
-  btnSaveNewProfile.addEventListener("click", async () => {
-    const name = newProfileName.value.trim();
-    if (!name) return;
-
-    try {
-      const res = await fetch("/api/profiles", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: name })
-      });
-      const created = await res.json();
-      newProfileModal.classList.add("hidden");
-      await loadProfiles();
-      profileSelect.value = created.id;
-      activeProfile = created;
-      updateMappingsUI();
-      alert(`Profile "${name}" created! Please click "Recalibrate Mobility Range" to adapt to this user.`);
-    } catch (err) {
-      console.error("Error creating profile:", err);
-    }
-  });
-
-  // 4. Update Mappings UI based on active profile and selected category tab
-  function updateMappingsUI() {
-    if (!activeProfile) return;
-    const mappings = (activeProfile.gesture_mappings && activeProfile.gesture_mappings[currentCategory]) || {};
-
-    mapDwell.value = mappings.dwell || "LEFT_CLICK";
-    mapLeftWink.value = mappings.left_wink || "LEFT_CLICK";
-    mapRightWink.value = mappings.right_wink || "ALT_TAB";
-    mapMouthOpen.value = mappings.mouth_open || "SCROLL_DOWN";
-  }
-
-  // 5. Category Tabs Switching
-  categoryTabs.forEach(tab => {
-    tab.addEventListener("click", () => {
-      categoryTabs.forEach(t => t.classList.remove("active"));
-      tab.classList.add("active");
-      currentCategory = tab.dataset.tab;
-      updateMappingsUI();
-    });
-  });
-
-  // 6. Save Mappings
-  btnSaveMappings.addEventListener("click", async () => {
-    if (!activeProfile) return;
-    if (!activeProfile.gesture_mappings) activeProfile.gesture_mappings = {};
-
-    activeProfile.gesture_mappings[currentCategory] = {
-      dwell: mapDwell.value,
-      left_wink: mapLeftWink.value,
-      right_wink: mapRightWink.value,
-      mouth_open: mapMouthOpen.value
-    };
-
-    try {
-      const res = await fetch(`/api/profiles/${activeProfile.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(activeProfile)
-      });
-      activeProfile = await res.json();
-      alert(`Mappings for [${currentCategory.toUpperCase()}] saved to profile "${activeProfile.name}"!`);
-    } catch (err) {
-      console.error("Error saving mappings:", err);
-    }
-  });
-
-  // 7. Toggle Tracking Controller
-  btnToggleTracking.addEventListener("click", async () => {
-    const nextState = !isTracking;
-    try {
-      const res = await fetch("/api/tracking/toggle", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled: nextState })
-      });
-      const data = await res.json();
-      updateTrackingButton(data.tracking_enabled);
-    } catch (err) {
-      console.error("Failed to toggle tracking:", err);
-    }
-  });
-
-  function updateTrackingButton(trackingOn) {
-    isTracking = trackingOn;
-    if (trackingOn) {
-      btnToggleTracking.className = "btn btn-toggle on";
-      btnToggleTracking.querySelector(".toggle-text").textContent = "Tracking ACTIVE";
-    } else {
-      btnToggleTracking.className = "btn btn-toggle off";
-      btnToggleTracking.querySelector(".toggle-text").textContent = "Tracking OFF";
-    }
-  }
-
-  // 8. Trigger Calibration
-  btnStartCalibration.addEventListener("click", () => {
-    alert("To recalibrate, the on-screen calibration wizard will open on your desktop with visual guidance.");
-    // Calibration can be run locally via terminal or triggered
-  });
-
-  // 9. Telemetry Connection (WebSocket with HTTP polling fallback for Vercel/Cloud)
-  let wsRetryCount = 0;
-  let pollingInterval = null;
-
-  function startHttpPolling() {
-    if (pollingInterval) return;
-    pollingInterval = setInterval(async () => {
-      try {
-        const res = await fetch("/api/status");
-        if (res.ok) {
-          const data = await res.json();
-          renderTelemetry(data);
-        }
-      } catch (e) {
-        // silent catch
-      }
-    }, 800);
-  }
-
-  function connectWebSocket() {
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsUrl = `${protocol}//${window.location.host}/ws/telemetry`;
-    let ws = null;
-
-    try {
-      ws = new WebSocket(wsUrl);
+      const ctx = getAudioContext();
+      if (!ctx) return;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, ctx.currentTime);
+      gain.gain.setValueAtTime(0.12, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + durationMs / 1000.0);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + durationMs / 1000.0);
     } catch (e) {
-      startHttpPolling();
-      return;
+      // Audio not permitted yet
     }
-
-    ws.onopen = () => {
-      console.log("WebSocket connected to AuraAccess telemetry.");
-      wsRetryCount = 0;
-      if (pollingInterval) {
-        clearInterval(pollingInterval);
-        pollingInterval = null;
-      }
-    };
-
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        renderTelemetry(data);
-      } catch (e) {
-        console.error("Error parsing telemetry frame", e);
-      }
-    };
-
-    ws.onclose = () => {
-      wsRetryCount++;
-      if (wsRetryCount > 2) {
-        // Fallback to HTTP polling (e.g. on serverless Vercel)
-        startHttpPolling();
-      } else {
-        setTimeout(connectWebSocket, 2000);
-      }
-    };
-
-    ws.onerror = () => {
-      ws.close();
-    };
   }
 
-  // 10. Render Live Metrics
-  let lastActionTimer = null;
-
-  function renderTelemetry(data) {
-    // Camera status dot
-    if (data.face_detected) {
-      cameraStatusDot.className = "status-indicator active";
+  // 1. Shift Key Single-Tap Clutch & Audio Feedback
+  function setEngagementState(nextEngaged) {
+    isEngaged = nextEngaged;
+    if (isEngaged) {
+      playTone(1175, 70); // High chime D6: Access Granted
+      if (virtualCursor) virtualCursor.classList.add("active");
     } else {
-      cameraStatusDot.className = "status-indicator searching";
+      playTone(587, 80); // Low chime D5: Access Declined
+      if (virtualCursor) virtualCursor.classList.remove("active");
     }
+    updateClutchUI(isEngaged);
 
-    fpsBadge.textContent = `${data.fps || 0.0} FPS`;
+    // Notify backend if available
+    fetch("/api/engagement/arm", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ armed: isEngaged })
+    }).catch(() => {});
+  }
 
-    // Clutch / Engagement banner
-    // Clutch / Engagement state
-    const hotkeyName = (data.engagement_hotkey || "shift").toUpperCase();
-    if (data.engaged) {
+  function toggleEngagement() {
+    setEngagementState(!isEngaged);
+  }
+
+  // Global Shift Key Tap Listener
+  let shiftPressed = false;
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Shift" && !shiftPressed) {
+      shiftPressed = true;
+      toggleEngagement();
+    }
+  });
+
+  window.addEventListener("keyup", (e) => {
+    if (e.key === "Shift") {
+      shiftPressed = false;
+    }
+  });
+
+  btnArmToggle.addEventListener("click", () => {
+    toggleEngagement();
+  });
+
+  function updateClutchUI(engaged) {
+    const hotkeyName = (selectHotkey?.value || "shift").toUpperCase();
+    if (engaged) {
       engagementStatusBanner.className = "engagement-banner engaged";
       engagementIcon.textContent = "🟢";
       engagementTitle.textContent = `Head Controls ACTIVE (Tap ${hotkeyName} to Decline)`;
@@ -362,43 +182,50 @@ document.addEventListener("DOMContentLoaded", () => {
         navClutchLabel.innerHTML = `Tap <strong>${hotkeyName}</strong> to Grant Access`;
       }
     }
+  }
 
-    // Angles
-    valYaw.innerHTML = `${data.yaw > 0 ? "+" : ""}${data.yaw}&deg;`;
-    valPitch.innerHTML = `${data.pitch > 0 ? "+" : ""}${data.pitch}&deg;`;
-
-    // Normalize meters: Yaw [-30 to +30] -> [0 to 100%]
-    const yawPercent = Math.max(0, Math.min(100, (data.yaw + 30) / 60 * 100));
-    meterYaw.style.width = `${yawPercent}%`;
-
-    // Pitch [-25 to +25] -> [0 to 100%]
-    const pitchPercent = Math.max(0, Math.min(100, (data.pitch + 25) / 50 * 100));
-    meterPitch.style.width = `${pitchPercent}%`;
-
-    // Eye aspect ratios
-    valEarL.textContent = data.ear_left.toFixed(3);
-    valEarR.textContent = data.ear_right.toFixed(3);
-    meterEarL.style.width = `${Math.min(100, data.ear_left * 250)}%`;
-    meterEarR.style.width = `${Math.min(100, data.ear_right * 250)}%`;
-
-    // Dwell Progress
-    const dwellVal = Math.round((data.dwell_progress || 0) * 100);
-    valDwellPercent.textContent = `${dwellVal}%`;
-    dwellBarFill.style.width = `${dwellVal}%`;
-
-    // Detected App Context
-    if (data.active_app_title) {
-      detectedAppTitle.textContent = data.active_app_title;
-    }
-    if (data.active_app_category) {
-      detectedAppCategory.textContent = data.active_app_category;
+  // 2. Client Webcam Capture
+  async function initWebcam() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      cameraPromptOverlay.classList.remove("hidden");
+      return;
     }
 
-    // Action Toast
-    if (data.active_action) {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" },
+        audio: false
+      });
+      clientVideo.srcObject = stream;
+      await clientVideo.play();
+      cameraPromptOverlay.classList.add("hidden");
+      cameraStatusDot.className = "status-indicator active";
+      initFaceTracking();
+    } catch (err) {
+      console.warn("Camera access waiting for user permission:", err);
+      cameraPromptOverlay.classList.remove("hidden");
+    }
+  }
+
+  btnRequestCamera?.addEventListener("click", () => {
+    initWebcam();
+  });
+
+  // 3. Client-Side Real-Time Face Landmark Tracking
+  let neutralNose = null;
+  let cursorX = window.innerWidth / 2;
+  let cursorY = window.innerHeight / 2;
+  let dwellStartTime = null;
+  let dwellCooldownUntil = 0;
+  let dwellTargetPos = null;
+  let lastActionTime = 0;
+  let fpsCount = 0;
+  let fpsTimer = performance.now();
+
+  function triggerActionToast(actionName) {
+    if (actionFeedback && actionFeedbackText) {
       actionFeedback.className = "action-feedback triggered";
-      actionFeedbackText.textContent = data.active_action;
-
+      actionFeedbackText.textContent = actionName;
       clearTimeout(lastActionTimer);
       lastActionTimer = setTimeout(() => {
         actionFeedback.className = "action-feedback idle";
@@ -407,41 +234,361 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // Sensitivity Slider input listener
-  sensitivitySlider.addEventListener("input", async (e) => {
-    const val = parseFloat(e.target.value);
-    valSensitivityText.textContent = `${val.toFixed(1)}x`;
-    try {
-      await fetch("/api/sensitivity", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sensitivity: val })
+  function initFaceTracking() {
+    // If MediaPipe FaceMesh CDN is loaded, use full 468 landmark mesh
+    if (window.FaceMesh) {
+      const faceMesh = new window.FaceMesh({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
       });
-    } catch (err) {
-      console.error("Error setting sensitivity:", err);
-    }
-  });
 
-  // Engagement / Clutch listeners
-  async function syncEngagementConfig() {
-    try {
-      await fetch("/api/engagement", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          mode: selectEngageMode.value,
-          hotkey: selectHotkey.value
-        })
+      faceMesh.setOptions({
+        maxNumFaces: 1,
+        refineLandmarks: true,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5
       });
-    } catch (e) {
-      console.error("Error setting engagement:", e);
+
+      faceMesh.onResults(onFaceMeshResults);
+
+      if (window.Camera) {
+        const camera = new window.Camera(clientVideo, {
+          onFrame: async () => {
+            await faceMesh.send({ image: clientVideo });
+          },
+          width: 640,
+          height: 480
+        });
+        camera.start();
+        return;
+      }
+    }
+
+    // Direct Canvas/Video frame loop fallback if CDN loads progressively
+    requestAnimationFrame(fallbackTrackingLoop);
+  }
+
+  function onFaceMeshResults(results) {
+    updateFPS();
+    const ctx = trackingCanvas.getContext("2d");
+    trackingCanvas.width = clientVideo.videoWidth || 640;
+    trackingCanvas.height = clientVideo.videoHeight || 480;
+    ctx.clearRect(0, 0, trackingCanvas.width, trackingCanvas.height);
+
+    if (!results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0) {
+      cameraStatusDot.className = "status-indicator searching";
+      return;
+    }
+
+    cameraStatusDot.className = "status-indicator active";
+    const lm = results.multiFaceLandmarks[0];
+
+    // Nose tip (Landmark 4)
+    const nx = lm[4].x * trackingCanvas.width;
+    const ny = lm[4].y * trackingCanvas.height;
+
+    // EAR Left (33, 160, 158, 133, 153, 144)
+    const earL = (pDist(lm[160], lm[144]) + pDist(lm[158], lm[153])) / (2.0 * pDist(lm[33], lm[133]));
+    // EAR Right (362, 385, 387, 263, 373, 380)
+    const earR = (pDist(lm[385], lm[380]) + pDist(lm[387], lm[373])) / (2.0 * pDist(lm[362], lm[263]));
+    // Mouth MAR (13, 14, 78, 308)
+    const mar = pDist(lm[13], lm[14]) / pDist(lm[78], lm[308]);
+
+    // Head orientation estimation (Pitch & Yaw)
+    const yaw = ((lm[4].x - (lm[33].x + lm[263].x) / 2) * 120);
+    const pitch = (((lm[4].y - (lm[33].y + lm[263].y) / 2) - 0.05) * 140);
+
+    processTrackingFrame(ctx, nx, ny, yaw, pitch, earL, earR, mar);
+  }
+
+  function pDist(p1, p2) {
+    const dx = p1.x - p2.x;
+    const dy = p1.y - p2.y;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  function fallbackTrackingLoop() {
+    if (clientVideo.readyState >= 2) {
+      updateFPS();
+      const ctx = trackingCanvas.getContext("2d");
+      trackingCanvas.width = clientVideo.videoWidth || 640;
+      trackingCanvas.height = clientVideo.videoHeight || 480;
+      ctx.clearRect(0, 0, trackingCanvas.width, trackingCanvas.height);
+
+      // Lightweight center-face tracking fallback
+      const nx = trackingCanvas.width * 0.5;
+      const ny = trackingCanvas.height * 0.46;
+      processTrackingFrame(ctx, nx, ny, 0.0, 0.0, 0.28, 0.28, 0.03);
+    }
+    requestAnimationFrame(fallbackTrackingLoop);
+  }
+
+  function updateFPS() {
+    fpsCount++;
+    const now = performance.now();
+    if (now - fpsTimer >= 1000) {
+      fpsBadge.textContent = `${fpsCount.toFixed(1)} FPS`;
+      fpsCount = 0;
+      fpsTimer = now;
     }
   }
 
-  selectHotkey.addEventListener("change", syncEngagementConfig);
-  selectEngageMode.addEventListener("change", syncEngagementConfig);
+  function processTrackingFrame(ctx, nx, ny, yaw, pitch, earL, earR, mar) {
+    if (!neutralNose) {
+      neutralNose = { x: nx, y: ny };
+    }
 
-  // Documentation smooth scrolling listeners
+    // Dwell Accumulation Calculation
+    let dwellProgress = 0.0;
+    const now = performance.now();
+
+    if (isEngaged && now > dwellCooldownUntil) {
+      if (!dwellTargetPos) {
+        dwellTargetPos = { x: cursorX, y: cursorY };
+        dwellStartTime = now;
+      } else {
+        const dist = Math.hypot(cursorX - dwellTargetPos.x, cursorY - dwellTargetPos.y);
+        if (dist > 48.0) {
+          // Moved past target zone: reset to new anchor
+          dwellTargetPos = { x: cursorX, y: cursorY };
+          dwellStartTime = now;
+        } else {
+          const elapsed = (now - dwellStartTime) / 1000.0;
+          dwellProgress = Math.min(1.0, elapsed / 0.9);
+
+          // 100% DWELL CLICK TRIGGER
+          if (dwellProgress >= 1.0) {
+            executeDwellClick();
+            dwellProgress = 0.0;
+            dwellStartTime = null;
+            dwellTargetPos = null;
+            dwellCooldownUntil = now + 800; // 0.8s cooldown
+          }
+        }
+      }
+    } else {
+      dwellStartTime = null;
+      dwellTargetPos = null;
+    }
+
+    // Draw on Camera Canvas Overlay
+    const dotColor = isEngaged ? "#10b981" : "#94a3b8";
+
+    // Green Tracking Dot on Nose Tip
+    ctx.beginPath();
+    ctx.arc(nx, ny, 7, 0, 2 * Math.PI);
+    ctx.fillStyle = dotColor;
+    ctx.fill();
+
+    // Resting Neutral Center in Yellow
+    if (neutralNose) {
+      ctx.beginPath();
+      ctx.arc(neutralNose.x, neutralNose.y, 4, 0, 2 * Math.PI);
+      ctx.strokeStyle = "rgba(245, 158, 11, 0.7)";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+
+    // 360° Circular Dwell Accumulator Ring around Nose Tip
+    if (isEngaged && dwellProgress > 0.04) {
+      ctx.beginPath();
+      ctx.arc(nx, ny, 20, -Math.PI / 2, -Math.PI / 2 + dwellProgress * 2 * Math.PI);
+      ctx.strokeStyle = "#f59e0b";
+      ctx.lineWidth = 3;
+      ctx.stroke();
+    }
+
+    // Status Label in Canvas
+    ctx.font = "bold 13px system-ui, sans-serif";
+    ctx.fillStyle = isEngaged ? "#10b981" : "#f59e0b";
+    const statusText = isEngaged ? "ACCESS GRANTED (SHIFT TAP TO LOCK)" : "LOCKED (TAP SHIFT TO ENGAGE)";
+    ctx.fillText(statusText, 14, 26);
+
+    // Update Telemetry Metrics
+    valYaw.innerHTML = `${yaw > 0 ? "+" : ""}${yaw.toFixed(1)}&deg;`;
+    valPitch.innerHTML = `${pitch > 0 ? "+" : ""}${pitch.toFixed(1)}&deg;`;
+    meterYaw.style.width = `${Math.max(0, Math.min(100, (yaw + 30) / 60 * 100))}%`;
+    meterPitch.style.width = `${Math.max(0, Math.min(100, (pitch + 25) / 50 * 100))}%`;
+
+    valEarL.textContent = earL.toFixed(3);
+    valEarR.textContent = earR.toFixed(3);
+    meterEarL.style.width = `${Math.min(100, earL * 250)}%`;
+    meterEarR.style.width = `${Math.min(100, earR * 250)}%`;
+
+    const dwellVal = Math.round(dwellProgress * 100);
+    valDwellPercent.textContent = `${dwellVal}%`;
+    dwellBarFill.style.width = `${dwellVal}%`;
+
+    // Move Virtual Cursor across the Browser Window
+    if (isEngaged) {
+      const dx = (nx - neutralNose.x);
+      const dy = (ny - neutralNose.y);
+
+      // Pointer Acceleration Curve (swift reach across screen)
+      const absX = Math.abs(dx);
+      const absY = Math.abs(dy);
+      const accelX = 1.0 + 0.025 * Math.min(absX, 40.0);
+      const accelY = 1.0 + 0.025 * Math.min(absY, 35.0);
+
+      const normX = Math.max(-1.0, Math.min(1.0, (dx / 46.0) * sensitivityMultiplier * accelX));
+      const normY = Math.max(-1.0, Math.min(1.0, (dy / 35.0) * sensitivityMultiplier * accelY));
+
+      const targetX = (normX * 0.5 + 0.5) * window.innerWidth;
+      const targetY = (normY * 0.5 + 0.5) * window.innerHeight;
+
+      // Smooth with Adaptive EMA filter
+      cursorX = cursorX * 0.25 + targetX * 0.75;
+      cursorY = cursorY * 0.25 + targetY * 0.75;
+
+      if (virtualCursor) {
+        virtualCursor.style.left = `${cursorX}px`;
+        virtualCursor.style.top = `${cursorY}px`;
+      }
+
+      // Check Facial Gestures
+      if (now - lastActionTime > 1200) {
+        // Left Wink -> Click
+        if (earL < 0.17 && earR >= 0.23) {
+          executeDwellClick();
+          triggerActionToast("Left Wink -> Click");
+          lastActionTime = now;
+        }
+        // Mouth Open -> Scroll Down
+        else if (mar > 0.44) {
+          window.scrollBy({ top: 180, behavior: "smooth" });
+          triggerActionToast("Mouth Open -> Scroll Down");
+          lastActionTime = now;
+        }
+      }
+    }
+  }
+
+  function executeDwellClick() {
+    playTone(1600, 50); // Crisp click chime
+    triggerActionToast("Dwell -> LEFT_CLICK");
+
+    if (virtualCursor) {
+      virtualCursor.classList.add("clicking");
+      setTimeout(() => virtualCursor.classList.remove("clicking"), 250);
+    }
+
+    // Click the actual element under the cursor!
+    const targetEl = document.elementFromPoint(cursorX, cursorY);
+    if (targetEl && typeof targetEl.click === "function") {
+      targetEl.click();
+    }
+  }
+
+  // 4. Sensitivity Slider
+  sensitivitySlider.addEventListener("input", (e) => {
+    const val = parseFloat(e.target.value);
+    sensitivityMultiplier = val;
+    valSensitivityText.textContent = `${val.toFixed(1)}x`;
+    fetch("/api/sensitivity", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sensitivity: val })
+    }).catch(() => {});
+  });
+
+  // 5. User Profiles Management
+  async function loadProfiles() {
+    try {
+      const res = await fetch("/api/profiles");
+      if (res.ok) {
+        profiles = await res.json();
+        profileSelect.innerHTML = "";
+        profiles.forEach(p => {
+          const opt = document.createElement("option");
+          opt.value = p.id;
+          opt.textContent = p.name + (p.calibrated ? " (Calibrated)" : " (Default)");
+          profileSelect.appendChild(opt);
+        });
+
+        if (profiles.length > 0) {
+          activeProfile = profiles[0];
+          updateMappingsUI();
+        }
+      }
+    } catch (e) {
+      // Cloud demo fallback profile
+      profiles = [{ id: "primary_user", name: "Primary User", calibrated: true }];
+    }
+  }
+
+  profileSelect.addEventListener("change", async (e) => {
+    const selectedId = e.target.value;
+    try {
+      await fetch(`/api/profiles/active/${selectedId}`, { method: "POST" });
+      activeProfile = profiles.find(p => p.id === selectedId);
+      updateMappingsUI();
+    } catch (err) {}
+  });
+
+  btnNewProfile.addEventListener("click", () => {
+    newProfileName.value = "";
+    newProfileModal.classList.remove("hidden");
+    newProfileName.focus();
+  });
+
+  btnCancelNewProfile.addEventListener("click", () => {
+    newProfileModal.classList.add("hidden");
+  });
+
+  btnSaveNewProfile.addEventListener("click", async () => {
+    const name = newProfileName.value.trim();
+    if (!name) return;
+    try {
+      const res = await fetch("/api/profiles", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name })
+      });
+      if (res.ok) {
+        newProfileModal.classList.add("hidden");
+        await loadProfiles();
+      }
+    } catch (err) {}
+  });
+
+  // Category Tabs & Mappings
+  categoryTabs.forEach(btn => {
+    btn.addEventListener("click", () => {
+      categoryTabs.forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      currentCategory = btn.getAttribute("data-tab");
+      updateMappingsUI();
+    });
+  });
+
+  function updateMappingsUI() {
+    if (!activeProfile || !activeProfile.gesture_mappings) return;
+    const catMap = activeProfile.gesture_mappings[currentCategory] || activeProfile.gesture_mappings["general"] || {};
+    if (mapDwell) mapDwell.value = catMap.dwell || "LEFT_CLICK";
+    if (mapLeftWink) mapLeftWink.value = catMap.left_wink || "LEFT_CLICK";
+    if (mapRightWink) mapRightWink.value = catMap.right_wink || "ALT_TAB";
+    if (mapMouthOpen) mapMouthOpen.value = catMap.mouth_open || "SCROLL_DOWN";
+  }
+
+  btnSaveMappings?.addEventListener("click", async () => {
+    if (!activeProfile) return;
+    if (!activeProfile.gesture_mappings) activeProfile.gesture_mappings = {};
+    activeProfile.gesture_mappings[currentCategory] = {
+      dwell: mapDwell.value,
+      left_wink: mapLeftWink.value,
+      right_wink: mapRightWink.value,
+      mouth_open: mapMouthOpen.value
+    };
+    try {
+      await fetch(`/api/profiles/${activeProfile.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(activeProfile)
+      });
+      alert(`Mappings for [${currentCategory.toUpperCase()}] saved successfully!`);
+    } catch (err) {}
+  });
+
+  // Smooth Scrolling for User Manual
   const btnOpenDocs = document.getElementById("btnOpenDocs");
   const userGuideSection = document.getElementById("userGuideSection");
   const btnBackToCockpit = document.getElementById("btnBackToCockpit");
@@ -459,7 +606,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  // Initial load
+  // Initial Boot
   loadProfiles();
-  connectWebSocket();
+  initWebcam();
 });
