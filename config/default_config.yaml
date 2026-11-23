@@ -1,0 +1,70 @@
+# Hands-Free Accessibility System Configuration
+# All parameters are strictly validated via Pydantic schema in config/schema.py
+
+camera:
+  device_index: 0
+  width: 640
+  height: 480
+  target_fps: 30
+  flip_horizontal: true   # Mirror camera view for intuitive head motion
+
+tracking:
+  eye_aspect_ratio_blink_threshold: 0.19
+  eye_aspect_ratio_wink_threshold: 0.17
+  mouth_aspect_ratio_threshold: 0.45
+  eyebrow_raise_ratio_threshold: 0.04
+  min_blink_duration_ms: 120
+  max_blink_duration_ms: 500
+  dwell_time_seconds: 0.9
+  deadzone_radius_px: 14.0
+
+head_pose:
+  yaw_sensitivity: 1.8
+  pitch_sensitivity: 2.2
+  max_yaw_angle_deg: 35.0
+  max_pitch_angle_deg: 25.0
+  invert_x: false
+  invert_y: false
+
+filter:
+  algorithm: "kalman"       # Options: "kalman", "dema"
+  kalman_process_noise: 0.005
+  kalman_measurement_noise: 0.08
+  spasm_velocity_cutoff_px: 250.0  # Spasms/tremors exceeding this velocity are dampened
+
+fatigue:
+  enabled: true
+  max_continuous_minutes: 20
+  blink_rate_warning_per_min: 8
+  auto_rest_timeout_seconds: 60
+
+sos:
+  enabled: true
+  sustained_eye_closure_seconds: 3.5
+  rapid_blink_count: 5
+  rapid_blink_window_seconds: 2.5
+  chime_frequency_hz: 900
+  chime_duration_ms: 800
+
+hud:
+  enabled: true
+  radius_px: 220
+  opacity: 0.82
+  dwell_trigger_seconds: 1.0
+  quadrant_actions:
+    top: "SCROLL_UP"
+    bottom: "SCROLL_DOWN"
+    left: "ALT_TAB"
+    right: "CLOSE_APP"
+    center: "DWELL_CLICK"
+
+dispatcher:
+  max_actions_per_second: 2
+  scroll_speed: 150
+  killswitch_key: "esc"
+  safe_mode: true           # When true, destructive commands require secondary dwell confirmation
+
+engagement:
+  mode: "toggle"            # "toggle": tap Shift once to grant access, tap again to decline access
+  hotkey: "shift"           # Options: "shift", "ctrl", "alt", "f8", "caps_lock"
+  initial_engaged: false    # Starts in safe disengaged mode by default

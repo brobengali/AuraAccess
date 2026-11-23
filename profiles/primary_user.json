@@ -1,0 +1,34 @@
+{
+  "id": "primary_user",
+  "name": "Primary User",
+  "neutral_pitch": 152.89902522787213,
+  "neutral_yaw": 5.1875782996479884,
+  "max_yaw_left": 4.0,
+  "max_yaw_right": 25.480659798090507,
+  "max_pitch_up": 15.633416841253222,
+  "max_pitch_down": 4.435197956519801,
+  "ear_open_baseline": 0.2676984881347031,
+  "ear_closed_baseline": 0.1472341684740867,
+  "blink_threshold": 0.2074663283043949,
+  "calibrated": true,
+  "gesture_mappings": {
+    "general": {
+      "left_wink": "LEFT_CLICK",
+      "right_wink": "ALT_TAB",
+      "mouth_open": "SCROLL_DOWN",
+      "dwell": "LEFT_CLICK"
+    },
+    "media": {
+      "dwell": "LEFT_CLICK",
+      "left_wink": "SPACE_PLAY_PAUSE",
+      "right_wink": "",
+      "mouth_open": "SCROLL_DOWN"
+    },
+    "document": {
+      "left_wink": "PAGE_DOWN",
+      "right_wink": "PAGE_UP",
+      "mouth_open": "SCROLL_DOWN",
+      "dwell": "LEFT_CLICK"
+    }
+  }
+}

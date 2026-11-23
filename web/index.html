@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AuraAccess — Zero-Cloud Hands-Free Accessibility System</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+</head>
+<body>
+
+  <!-- Top Announcement Bar -->
+  <header class="top-nav">
+    <div class="brand">
+      <div class="logo-icon">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M3 7V5a2 2 0 0 1 2-2h2"></path>
+          <path d="M17 3h2a2 2 0 0 1 2 2v2"></path>
+          <path d="M21 17v2a2 2 0 0 1-2 2h-2"></path>
+          <path d="M7 21H5a2 2 0 0 1-2-2v-2"></path>
+        </svg>
+      </div>
+      <div>
+        <span class="brand-title">AuraAccess</span>
+        <span class="brand-badge">Air-Gapped & Local-First</span>
+      </div>
+    </div>
+
+    <!-- Active User Profile Dropdown & Master Control -->
+    <div class="nav-controls">
+      <div class="profile-selector-wrap">
+        <label for="profileSelect">Active User:</label>
+        <select id="profileSelect" class="select-input">
+          <option value="" disabled selected>Loading profiles...</option>
+        </select>
+        <button id="btnNewProfile" class="btn btn-secondary btn-sm">+ New User</button>
+        <button id="btnOpenDocs" class="btn btn-secondary btn-sm">📖 How to Use</button>
+      </div>
+
+      <div class="clutch-header-badge locked" id="navClutchIndicator" title="Mouse and gestures only activate while holding SHIFT or clicking Engage">
+        <span class="clutch-icon" id="navClutchIcon">🔒</span>
+        <span class="clutch-label" id="navClutchLabel">Control Key: <strong>SHIFT</strong> (Inactive)</span>
+      </div>
+
+      <div class="toggle-wrap">
+        <span class="toggle-label">Tracking Controller:</span>
+        <button id="btnToggleTracking" class="btn btn-toggle off">
+          <span class="toggle-dot"></span>
+          <span class="toggle-text">Tracking OFF</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Product Hero & Value Proposition -->
+  <section class="hero-section">
+    <div class="hero-content">
+      <div class="privacy-pill">
+        <span class="pulse-dot"></span>
+        100% On-Device Architecture &bull; Zero Cloud Uploads &bull; Biometrics Never Leave RAM
+      </div>
+      <h1 class="hero-headline">
+        Digital Freedom for Limited Mobility.<br>
+        <span class="gradient-text">Controlled Solely by Head & Facial Gestures.</span>
+      </h1>
+      <p class="hero-subtext">
+        Engineered for individuals with severe paralysis, ALS, and quadriplegia. Seamlessly navigate apps, slide between windows, scroll feeds, and control media without touching a physical device.
+      </p>
+    </div>
+  </section>
+
+  <!-- Main Application Workspace -->
+  <main class="dashboard-grid">
+
+    <!-- LEFT COLUMN: Live Telemetry & Sensor Cockpit -->
+    <div class="card cockpit-card">
+      <div class="card-header">
+        <div class="header-with-status">
+          <div id="cameraStatusDot" class="status-indicator searching"></div>
+          <div>
+            <h2 class="card-title">Live Sensor Cockpit</h2>
+            <p class="card-subtitle">Real-time local landmark geometry & angle telemetry</p>
+          </div>
+        </div>
+        <span id="fpsBadge" class="badge">0.0 FPS</span>
+      </div>
+
+      <!-- Live Camera Video Feed -->
+      <div class="video-stream-container">
+        <img id="liveVideoFeed" src="/video_feed" alt="Live Camera Tracking Feed" class="camera-stream-img">
+        <div class="stream-overlay-badge">
+          <span class="live-dot"></span> LIVE ON-DEVICE STREAM
+        </div>
+      </div>
+
+      <!-- Sensitivity Slider Control -->
+      <div class="sensitivity-slider-box">
+        <div class="slider-header">
+          <span>Head Motion Responsiveness (Sensitivity):</span>
+          <span id="valSensitivityText">2.5x</span>
+        </div>
+        <input type="range" id="sensitivitySlider" min="0.8" max="5.0" step="0.2" value="2.5" class="range-slider">
+      </div>
+
+      <!-- Clutch / Engagement Hotkey Banner -->
+      <div id="engagementStatusBanner" class="engagement-banner disengaged">
+        <div class="engagement-icon" id="engagementIcon">🔒</div>
+        <div class="engagement-info">
+          <div class="engagement-title" id="engagementTitle">Safety Standby: Cursor & Gestures Locked</div>
+          <div class="engagement-hint" id="engagementHint">Tap <strong>SHIFT key</strong> (or click button) to get access. Tap SHIFT again to decline access.</div>
+        </div>
+        <button id="btnArmToggle" class="btn btn-arm-toggle off">
+          <span class="arm-dot"></span>
+          <span id="armBtnText">Grant Access (Shift Tap)</span>
+        </button>
+      </div>
+
+      <!-- 3-Step Clear Visual Guide -->
+      <div class="how-it-works-strip">
+        <div class="step-pill"><span class="step-num">1</span> Green dot tracks your nose</div>
+        <div class="step-pill"><span class="step-num">2</span> Tap <strong>SHIFT</strong> once for access</div>
+        <div class="step-pill"><span class="step-num">3</span> Pause on any icon 0.9s to <strong>Dwell Click</strong> (or tap SHIFT to lock)</div>
+      </div>
+
+      <!-- Engagement Key Configuration -->
+      <div class="engagement-config-box">
+        <div class="config-item">
+          <label for="selectHotkey">Activation Key:</label>
+          <select id="selectHotkey" class="select-input">
+            <option value="shift" selected>Shift Key</option>
+            <option value="ctrl">Ctrl Key</option>
+            <option value="alt">Alt Key</option>
+            <option value="caps_lock">Caps Lock</option>
+            <option value="f8">F8 Key</option>
+          </select>
+        </div>
+        <div class="config-item">
+          <label for="selectEngageMode">Trigger Mode:</label>
+          <select id="selectEngageMode" class="select-input">
+            <option value="toggle" selected>Tap to Toggle ON/OFF (Recommended)</option>
+            <option value="hold">Hold to Control</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Real-time Metrics Grid -->
+      <div class="metrics-grid">
+        <div class="metric-box">
+          <span class="metric-label">Head Yaw (Horizontal)</span>
+          <div class="metric-val" id="valYaw">0.0&deg;</div>
+          <div class="meter-bar"><div id="meterYaw" class="meter-fill" style="width: 50%;"></div></div>
+        </div>
+
+        <div class="metric-box">
+          <span class="metric-label">Head Pitch (Vertical)</span>
+          <div class="metric-val" id="valPitch">0.0&deg;</div>
+          <div class="meter-bar"><div id="meterPitch" class="meter-fill" style="width: 50%;"></div></div>
+        </div>
+
+        <div class="metric-box">
+          <span class="metric-label">Left Eye Ratio (EAR)</span>
+          <div class="metric-val" id="valEarL">0.000</div>
+          <div class="meter-bar"><div id="meterEarL" class="meter-fill" style="width: 40%;"></div></div>
+        </div>
+
+        <div class="metric-box">
+          <span class="metric-label">Right Eye Ratio (EAR)</span>
+          <div class="metric-val" id="valEarR">0.000</div>
+          <div class="meter-bar"><div id="meterEarR" class="meter-fill" style="width: 40%;"></div></div>
+        </div>
+      </div>
+
+      <!-- Live Dwell Accumulator -->
+      <div class="dwell-panel">
+        <div class="dwell-header">
+          <span>Dwell Click Accumulator</span>
+          <span id="valDwellPercent">0%</span>
+        </div>
+        <div class="dwell-progress-bar">
+          <div id="dwellBarFill" class="dwell-fill" style="width: 0%;"></div>
+        </div>
+      </div>
+
+      <!-- Active Application Banner -->
+      <div class="app-detector-box">
+        <div class="detector-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+            <line x1="8" y1="21" x2="16" y2="21"></line>
+            <line x1="12" y1="17" x2="12" y2="21"></line>
+          </svg>
+        </div>
+        <div class="detector-details">
+          <div class="detector-meta">
+            <span class="detector-label">Active Foreground Window:</span>
+            <span id="detectedAppCategory" class="category-badge">general</span>
+          </div>
+          <div id="detectedAppTitle" class="detector-title">Windows Desktop</div>
+        </div>
+      </div>
+
+      <!-- Action Confirmation Toast -->
+      <div id="actionFeedback" class="action-feedback idle">
+        <span class="action-icon">&bull;</span>
+        <span id="actionFeedbackText">System Ready &mdash; Standing by</span>
+      </div>
+
+      <!-- Calibration & Sensitivity Triggers -->
+      <div class="cockpit-actions">
+        <button id="btnStartCalibration" class="btn btn-primary btn-block">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 20v-6M6 20V10M18 20V4"></path>
+          </svg>
+          Recalibrate Mobility Range
+        </button>
+      </div>
+    </div>
+
+    <!-- RIGHT COLUMN: Context-Aware Action Studio (Zero Hardcoding) -->
+    <div class="card studio-card">
+      <div class="card-header">
+        <div>
+          <h2 class="card-title">Context-Aware Action Studio</h2>
+          <p class="card-subtitle">Customizable gestures mapped dynamically per application</p>
+        </div>
+        <button id="btnSaveMappings" class="btn btn-primary btn-sm">Save Mappings</button>
+      </div>
+
+      <!-- App Category Tabs -->
+      <div class="category-tabs">
+        <button class="tab-btn active" data-tab="general">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"></path></svg>
+          General Desktop
+        </button>
+        <button class="tab-btn" data-tab="media">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+          YouTube & Media
+        </button>
+        <button class="tab-btn" data-tab="document">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+          Reading & Documents
+        </button>
+      </div>
+
+      <!-- Gesture Mapping Rows (Configurable) -->
+      <div class="mapping-table-wrap">
+        <div class="mapping-row">
+          <div class="gesture-info">
+            <span class="gesture-name">Hover / Dwell (1.2s)</span>
+            <span class="gesture-desc">Keeping head cursor stationary over any button</span>
+          </div>
+          <div class="gesture-action-select">
+            <select id="map_dwell" class="select-input">
+              <option value="LEFT_CLICK">Left Click (Select)</option>
+              <option value="RIGHT_CLICK">Right Click (Context Menu)</option>
+              <option value="NONE">Do Nothing</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="mapping-row">
+          <div class="gesture-info">
+            <span class="gesture-name">Left Eye Wink</span>
+            <span class="gesture-desc">Deliberately winking the left eye while right stays open</span>
+          </div>
+          <div class="gesture-action-select">
+            <select id="map_left_wink" class="select-input">
+              <option value="LEFT_CLICK">Left Click (Select)</option>
+              <option value="RIGHT_CLICK">Right Click</option>
+              <option value="SPACE_PLAY_PAUSE">Space (Play/Pause Media)</option>
+              <option value="PAGE_DOWN">Page Down (Next Page)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="mapping-row">
+          <div class="gesture-info">
+            <span class="gesture-name">Right Eye Wink</span>
+            <span class="gesture-desc">Deliberately winking the right eye</span>
+          </div>
+          <div class="gesture-action-select">
+            <select id="map_right_wink" class="select-input">
+              <option value="ALT_TAB">Switch App (Alt + Tab)</option>
+              <option value="CLOSE_APP">Close Window (Alt + F4)</option>
+              <option value="PAGE_UP">Page Up (Previous Page)</option>
+              <option value="RIGHT_CLICK">Right Click</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="mapping-row">
+          <div class="gesture-info">
+            <span class="gesture-name">Mouth Open / Smile</span>
+            <span class="gesture-desc">Opening mouth slightly or raising jaw</span>
+          </div>
+          <div class="gesture-action-select">
+            <select id="map_mouth_open" class="select-input">
+              <option value="SCROLL_DOWN">Scroll Down</option>
+              <option value="SCROLL_UP">Scroll Up</option>
+              <option value="SPACE_PLAY_PAUSE">Space (Play/Pause)</option>
+              <option value="NONE">Do Nothing</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Feature Highlights -->
+      <div class="pillars-row">
+        <div class="pillar-card">
+          <div class="pillar-title">🛡️ Tremor & Spasm Shield</div>
+          <p class="pillar-text">Dual-stage Kalman filter rejects accidental muscle twitches and involuntary jerks.</p>
+        </div>
+        <div class="pillar-card">
+          <div class="pillar-title">🚨 Emergency Caregiver SOS</div>
+          <p class="pillar-text">Holding eyes shut for 3.5s sounds an immediate high-frequency audible local chime.</p>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- COMPREHENSIVE USER MANUAL & OPERATIONAL GUIDE -->
+  <section id="userGuideSection" class="user-guide-container">
+    <div class="guide-header">
+      <div class="guide-badge">OPERATIONAL REFERENCE MANUAL</div>
+      <h2 class="guide-title">How to Use AuraAccess</h2>
+      <p class="guide-subtitle">A complete reference guide for individuals with quadriplegia, ALS, motor neuron conditions, and caregivers.</p>
+    </div>
+
+    <!-- Quick Navigation Pills -->
+    <div class="guide-nav-pills">
+      <a href="#guide-quickstart" class="guide-nav-pill">🚀 1. Quick Start</a>
+      <a href="#guide-shift" class="guide-nav-pill">⌨️ 2. Shift Tap Clutch</a>
+      <a href="#guide-cursor" class="guide-nav-pill">🎯 3. Cursor Steering</a>
+      <a href="#guide-dwell" class="guide-nav-pill">⏱️ 4. Dwell Click</a>
+      <a href="#guide-gestures" class="guide-nav-pill">👁️ 5. Facial Gestures</a>
+      <a href="#guide-sos" class="guide-nav-pill">🚨 6. Caregiver SOS</a>
+      <a href="#guide-calibration" class="guide-nav-pill">📐 7. Calibration</a>
+      <a href="#guide-apps" class="guide-nav-pill">🖥️ 8. External Apps & Dock</a>
+      <a href="#guide-troubleshooting" class="guide-nav-pill">🔧 9. Troubleshooting</a>
+    </div>
+
+    <div class="guide-content-grid">
+      <!-- 1. Quick Start -->
+      <div id="guide-quickstart" class="guide-card">
+        <div class="guide-card-icon">🚀</div>
+        <h3 class="guide-card-title">1. Quick Start in 3 Simple Steps</h3>
+        <p class="guide-card-desc">No complicated setup or internet connection required. Everything runs locally on your PC.</p>
+        <ol class="guide-steps-list">
+          <li><strong>Position your webcam:</strong> Place your camera roughly at eye level, 50–70 cm in front of you with decent frontal lighting.</li>
+          <li><strong>Confirm nose tracking:</strong> Look at the <em>Live Sensor Cockpit</em> above. You should see a green dot tracking your nose tip in real time.</li>
+          <li><strong>Tap Shift to take control:</strong> Press the <kbd>Shift</kbd> key once on your keyboard (or click "Grant Access"). A high chime will sound and the cursor will immediately follow your head movement.</li>
+        </ol>
+      </div>
+
+      <!-- 2. Shift Tap Clutch -->
+      <div id="guide-shift" class="guide-card">
+        <div class="guide-card-icon">⌨️</div>
+        <h3 class="guide-card-title">2. Shift Tap Safety Clutch (No Holding Required)</h3>
+        <p class="guide-card-desc">AuraAccess never traps or hijacks your cursor. You retain 100% control with a single key tap.</p>
+        <div class="guide-feature-box">
+          <div class="guide-feature-row">
+            <span class="status-pill green">Single Tap Shift</span>
+            <div><strong>Access Granted (Active):</strong> Cursor steering and gestures engage immediately. An ascending high chime (1175 Hz) confirms activation.</div>
+          </div>
+          <div class="guide-feature-row">
+            <span class="status-pill gray">Tap Shift Again</span>
+            <div><strong>Access Declined (Safety Standby):</strong> Cursor freezes instantly in place. Gestures are locked. A descending low chime (587 Hz) confirms safety lock. Physical mouse and keyboard are completely free.</div>
+          </div>
+        </div>
+        <div class="guide-callout info">
+          <strong>Tip for Caregivers:</strong> If you need to use the computer, simply tap <kbd>Shift</kbd> to lock AuraAccess, or click "Decline Access" on the dashboard.
+        </div>
+      </div>
+
+      <!-- 3. Cursor Steering & Sensitivity -->
+      <div id="guide-cursor" class="guide-card">
+        <div class="guide-card-icon">🎯</div>
+        <h3 class="guide-card-title">3. Swift Head-Mouse Cursor Navigation</h3>
+        <p class="guide-card-desc">The cursor moves fluidly like a high-DPI optical mouse with zero lag and built-in pointer acceleration.</p>
+        <ul class="guide-bullets">
+          <li><strong>Subtle Head Tilts:</strong> Gentle nods (up/down) and turns (left/right) steer the mouse across your desktop.</li>
+          <li><strong>Non-Linear Acceleration:</strong> Small head motions give single-pixel precision for clicking small text or checkboxes; quick head turns swiftly fling the cursor across dual monitors without straining your neck.</li>
+          <li><strong>Adaptive Tremor Filter:</strong> High-frequency muscle twitches, Parkinsonian tremors, and accidental spasms are automatically dampened by the 2D Kalman filter.</li>
+          <li><strong>Sensitivity Slider:</strong> Adjust responsiveness from 0.8x (conservative) to 5.0x (ultra-responsive) depending on your comfort range.</li>
+        </ul>
+      </div>
+
+      <!-- 4. Dwell Click Accumulator -->
+      <div id="guide-dwell" class="guide-card">
+        <div class="guide-card-icon">⏱️</div>
+        <h3 class="guide-card-title">4. Dwell Click Accumulator (Hover to Click)</h3>
+        <p class="guide-card-desc">Click any button, link, or desktop icon simply by pausing your cursor over it.</p>
+        <div class="guide-steps-list">
+          <div><strong>1. Steer onto target:</strong> Move the mouse cursor over the folder, button, or link you want to click.</div>
+          <div><strong>2. Rest for 0.9 seconds:</strong> Keep your head reasonably still inside the 48-pixel target zone.</div>
+          <div><strong>3. Visual 360° Ring:</strong> Watch the yellow/green progress ring complete a circle around your nose tip in the camera feed.</div>
+          <div><strong>4. Instant Click & Chime:</strong> A crisp click sound plays and a native Windows Left Click is dispatched instantly.</div>
+          <div><strong>5. 0.8s Safety Cooldown:</strong> Dwell pauses for 0.8s after clicking to prevent accidental repeated clicks while reading.</div>
+        </div>
+      </div>
+
+      <!-- 5. Facial Gestures & Multi-App Context -->
+      <div id="guide-gestures" class="guide-card">
+        <div class="guide-card-icon">👁️</div>
+        <h3 class="guide-card-title">5. Facial Gestures & Context-Aware Studio</h3>
+        <p class="guide-card-desc">AuraAccess automatically detects the application you are using and adapts its gesture responses dynamically.</p>
+        <table class="guide-table">
+          <thead>
+            <tr>
+              <th>Gesture</th>
+              <th>General Desktop</th>
+              <th>YouTube & Media</th>
+              <th>Reading & Docs</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Dwell (0.9s)</strong></td>
+              <td>Left Click</td>
+              <td>Left Click</td>
+              <td>Left Click</td>
+            </tr>
+            <tr>
+              <td><strong>Left Wink</strong></td>
+              <td>Left Click</td>
+              <td>Play / Pause (Space)</td>
+              <td>Page Down</td>
+            </tr>
+            <tr>
+              <td><strong>Right Wink</strong></td>
+              <td>Alt + Tab (Switch App)</td>
+              <td>Mute / Unmute</td>
+              <td>Page Up</td>
+            </tr>
+            <tr>
+              <td><strong>Mouth Open / Smile</strong></td>
+              <td>Scroll Down</td>
+              <td>Scroll Down (Comments)</td>
+              <td>Scroll Down</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="guide-callout note">
+          You can customize any gesture action in the <em>Context-Aware Action Studio</em> on the right side of the dashboard and click <strong>Save Mappings</strong>.
+        </div>
+      </div>
+
+      <!-- 6. Caregiver SOS Alert -->
+      <div id="guide-sos" class="guide-card">
+        <div class="guide-card-icon">🚨</div>
+        <h3 class="guide-card-title">6. Emergency Caregiver SOS Alarm</h3>
+        <p class="guide-card-desc">Designed for locked-in or bedridden individuals who need urgent attention from a family member or nurse.</p>
+        <div class="guide-feature-box">
+          <div class="guide-feature-row">
+            <span class="status-pill red">Sustained Eye Closure (3.5s)</span>
+            <div>Close both eyes continuously for 3.5 seconds to trigger the emergency siren.</div>
+          </div>
+          <div class="guide-feature-row">
+            <span class="status-pill red">Rapid Distress Blinks</span>
+            <div>Blink rapidly 5 times in 2.5 seconds to instantly trigger the alarm.</div>
+          </div>
+          <div class="guide-feature-row">
+            <span class="status-pill blue">Local Audio Siren</span>
+            <div>A loud 900 Hz emergency tone sounds through your PC speakers to alert caregivers across the house, even when headphones are unplugged.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 7. Mobility Range Calibration -->
+      <div id="guide-calibration" class="guide-card">
+        <div class="guide-card-icon">📐</div>
+        <h3 class="guide-card-title">7. Personalized Mobility Calibration</h3>
+        <p class="guide-card-desc">No hardcoded thresholds. The system adapts to each individual's unique physical range of motion.</p>
+        <ul class="guide-bullets">
+          <li>Click <strong>Recalibrate Mobility Range</strong> on the dashboard or run <code>python calibration/run_calibration.py</code>.</li>
+          <li>The visual calibration wizard guides you through 5 comfortable poses: Resting Neutral, Look Left, Look Right, Look Up, and Look Down.</li>
+          <li>Even if a user can only move their head by 3 degrees, the normalizer stretches that 3-degree range across the full 100% width of the desktop!</li>
+          <li>Multiple profiles can be created for different users (e.g. "Grandpa", "Patient 1", "Guest") using the <strong>+ New User</strong> button in the top bar.</li>
+        </ul>
+      </div>
+
+      <!-- 8. Floating Assistive Dock & OSK Keyboard -->
+      <div id="guide-apps" class="guide-card">
+        <div class="guide-card-icon">🖥️</div>
+        <h3 class="guide-card-title">8. Controlling Other Desktop Applications</h3>
+        <p class="guide-card-desc">Use AuraAccess to browse the web, write documents, open games, and control any Windows application.</p>
+        <ul class="guide-bullets">
+          <li><strong>Always-on-Top Floating Dock:</strong> Double click <code>START_AURA_ACCESS.bat</code> or run <code>python ui/assistive_dock.py</code> to launch the floating accessibility ribbon.</li>
+          <li><strong>On-Screen Keyboard:</strong> Dwell-click the <em>"OSK Keyboard"</em> button on the floating ribbon to type emails and search queries without a physical keyboard.</li>
+          <li><strong>Application Switcher:</strong> Right-wink or dwell on <em>"Switch App"</em> to cycle between your open windows.</li>
+          <li><strong>Web Browsing:</strong> Open Chrome, Edge, or Firefox. Dwell on links to open them, open your mouth to scroll down news feeds or PDFs.</li>
+        </ul>
+      </div>
+
+      <!-- 9. Troubleshooting & FAQ -->
+      <div id="guide-troubleshooting" class="guide-card">
+        <div class="guide-card-icon">🔧</div>
+        <h3 class="guide-card-title">9. Troubleshooting & FAQs</h3>
+        <p class="guide-card-desc">Quick solutions to common operational questions.</p>
+        <div class="faq-item">
+          <strong>Q: Cursor is not moving when I move my head?</strong>
+          <p>Make sure you have tapped <kbd>Shift</kbd> to grant access. The header badge must say <code>🟢 ACTIVE</code>. Also verify that the green dot in the camera stream is tracking your nose.</p>
+        </div>
+        <div class="faq-item">
+          <strong>Q: Cursor is moving too slowly or too fast?</strong>
+          <p>Adjust the <em>Head Motion Responsiveness (Sensitivity)</em> slider on the dashboard. 2.4x is recommended for standard displays, 3.5x–4.0x for multi-monitor setups.</p>
+        </div>
+        <div class="faq-item">
+          <strong>Q: Can someone else use the mouse while AuraAccess is running?</strong>
+          <p>Yes! Simply tap <kbd>Shift</kbd> once to lock AuraAccess. In safety standby, the physical mouse and keyboard work with 100% normal native Windows behavior.</p>
+        </div>
+        <div class="faq-item">
+          <strong>Q: Does any camera video leave my computer?</strong>
+          <p><strong>Zero.</strong> AuraAccess is completely air-gapped and local-first. Video frames are processed in system RAM and immediately discarded. No data is ever saved to disk or transmitted to any server.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Back to Live Cockpit Floating Anchor -->
+    <div class="guide-footer-action">
+      <a href="#" class="btn btn-primary" id="btnBackToCockpit">
+        &uarr; Return to Live Sensor Cockpit
+      </a>
+    </div>
+  </section>
+
+  <!-- Modal: Create New User Profile -->
+  <div id="newProfileModal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <h3 class="modal-title">Create New Mobility Profile</h3>
+      <p class="modal-desc">Add a profile for another user or family member. Calibration will be saved separately.</p>
+      <div class="form-group">
+        <label for="newProfileName">User Name / Identifier:</label>
+        <input type="text" id="newProfileName" class="text-input" placeholder="e.g. Grandma, Patient 2, Guest" autofocus>
+      </div>
+      <div class="modal-actions">
+        <button id="btnCancelNewProfile" class="btn btn-secondary">Cancel</button>
+        <button id="btnSaveNewProfile" class="btn btn-primary">Create Profile</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
