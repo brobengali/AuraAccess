@@ -117,10 +117,16 @@ document.addEventListener("DOMContentLoaded", () => {
     isEngaged = nextEngaged;
     if (isEngaged) {
       playTone(1175, 70); // High chime D6: Access Granted
-      if (virtualCursor) virtualCursor.classList.add("active");
+      if (virtualCursor) {
+        virtualCursor.classList.add("visible", "engaged");
+        virtualCursor.classList.remove("locked");
+      }
     } else {
       playTone(587, 80); // Low chime D5: Access Declined
-      if (virtualCursor) virtualCursor.classList.remove("active");
+      if (virtualCursor) {
+        virtualCursor.classList.add("visible", "locked");
+        virtualCursor.classList.remove("engaged");
+      }
     }
     updateClutchUI(isEngaged);
 
@@ -214,6 +220,8 @@ document.addEventListener("DOMContentLoaded", () => {
     setTrackingState(!isTracking);
   });
 
+  const motionDirectionText = document.getElementById("motionDirectionText");
+
   async function initWebcam() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       cameraPromptOverlay?.classList.remove("hidden");
@@ -225,15 +233,46 @@ document.addEventListener("DOMContentLoaded", () => {
         video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" },
         audio: false
       });
-      clientVideo.srcObject = stream;
       clientVideo.muted = true;
+      clientVideo.defaultMuted = true;
+      clientVideo.playsInline = true;
       clientVideo.setAttribute("playsinline", "true");
+      clientVideo.setAttribute("muted", "true");
+      clientVideo.setAttribute("autoplay", "true");
+      clientVideo.srcObject = stream;
       await clientVideo.play();
+
       cameraPromptOverlay?.classList.add("hidden");
       cameraStatusDot.className = "status-indicator active";
+      
+      // Auto-engage so visitor immediately has active control
+      setEngagementState(true);
+      
       initFaceTracking();
     } catch (err) {
-      console.warn("Camera access waiting for user permission:", err);
+      console.warn("Camera access waiting for user permission or denied:", err);
+      // Fallback: check if local /video_feed is available from python
+      checkLocalVideoFallback();
+    }
+  }
+
+  function checkLocalVideoFallback() {
+    const fallbackImg = document.getElementById("fallbackImgFeed");
+    if (fallbackImg) {
+      const testImg = new Image();
+      testImg.onload = () => {
+        fallbackImg.src = "/video_feed";
+        fallbackImg.style.display = "block";
+        clientVideo.style.display = "none";
+        cameraPromptOverlay?.classList.add("hidden");
+        cameraStatusDot.className = "status-indicator active";
+        setEngagementState(true);
+      };
+      testImg.onerror = () => {
+        cameraPromptOverlay?.classList.remove("hidden");
+      };
+      testImg.src = "/video_feed?" + Date.now();
+    } else {
       cameraPromptOverlay?.classList.remove("hidden");
     }
   }
@@ -244,8 +283,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // 3. Client-Side Real-Time Face Landmark Tracking
   let neutralNose = null;
-  let lastNoseX = null;
-  let lastNoseY = null;
   let cursorX = window.innerWidth / 2;
   let cursorY = window.innerHeight / 2;
   let dwellStartTime = null;
@@ -295,7 +332,7 @@ document.addEventListener("DOMContentLoaded", () => {
       });
     }
 
-    // Unified single 60 FPS render and tracking loop
+    // Unified 60 FPS render and tracking loop
     requestAnimationFrame(trackingRenderLoop);
   }
 
@@ -317,8 +354,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Recalibrate Neutral Center Anchor
   btnStartCalibration?.addEventListener("click", () => {
-    if (lastNoseX !== null && lastNoseY !== null) {
-      neutralNose = { x: lastNoseX, y: lastNoseY };
+    if (lastLandmarks) {
+      const vw = trackingCanvas.width || 640;
+      const vh = trackingCanvas.height || 480;
+      neutralNose = { x: lastLandmarks[4].x * vw, y: lastLandmarks[4].y * vh };
     } else {
       neutralNose = { x: trackingCanvas.width / 2, y: trackingCanvas.height * 0.48 };
     }
@@ -333,7 +372,7 @@ document.addEventListener("DOMContentLoaded", () => {
     setTimeout(() => playTone(1760, 80), 80);
   });
 
-  // Main Render & Tracking Loop
+  // Main Render & Precision Velocity Tracking Loop
   function trackingRenderLoop() {
     if (clientVideo && clientVideo.readyState >= 2) {
       updateFPS();
@@ -348,14 +387,10 @@ document.addEventListener("DOMContentLoaded", () => {
       const w = trackingCanvas.width;
       const h = trackingCanvas.height;
 
-      // STEP 1: ALWAYS RENDER THE USER'S LIVE WEBCAM VIDEO (Horizontally Mirrored)
-      ctx.save();
-      ctx.translate(w, 0);
-      ctx.scale(-1, 1);
-      ctx.drawImage(clientVideo, 0, 0, w, h);
-      ctx.restore();
+      // Clear the overlay canvas so video underneath is 100% visible and unhindered
+      ctx.clearRect(0, 0, w, h);
 
-      // STEP 2: SEND VIDEO FRAME TO FACEMESH IF TRACKING IS ENABLED
+      // Send frame to FaceMesh when tracking is active
       if (isTracking && faceMesh && !isProcessingMesh) {
         isProcessingMesh = true;
         faceMesh.send({ image: clientVideo })
@@ -365,13 +400,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
       const now = performance.now();
 
-      // STEP 3: IF TRACKING IS PAUSED VIA CONTROLLER
+      // IF TRACKING IS PAUSED VIA CONTROLLER
       if (!isTracking) {
-        // Dark translucent overlay
         ctx.fillStyle = "rgba(11, 15, 25, 0.72)";
         ctx.fillRect(0, 0, w, h);
 
-        // Paused Banner
         ctx.fillStyle = "#ef4444";
         ctx.font = "bold 18px system-ui, sans-serif";
         ctx.textAlign = "center";
@@ -382,24 +415,22 @@ document.addEventListener("DOMContentLoaded", () => {
         ctx.textAlign = "left";
 
         cameraStatusDot.className = "status-indicator searching";
-        if (virtualCursor) virtualCursor.classList.remove("active");
+        if (motionDirectionText) motionDirectionText.textContent = "⏸️ PAUSED";
+        if (virtualCursor) virtualCursor.classList.remove("visible");
         requestAnimationFrame(trackingRenderLoop);
         return;
       }
 
-      // STEP 4: ACTIVE TRACKING WITH FACIAL LANDMARKS
+      // ACTIVE FACE LANDMARK TRACKING
       const isFaceFresh = lastLandmarks && (now - lastLandmarkTimestamp < 650);
 
       if (isFaceFresh) {
         cameraStatusDot.className = "status-indicator active";
         const lm = lastLandmarks;
 
-        // Horizontally mirrored coordinates matching the mirrored selfie view:
-        // Landmark 4 is the nose tip
-        const nx = (1.0 - lm[4].x) * w;
+        // In mirrored CSS canvas, Landmark 4 (nose tip):
+        const nx = lm[4].x * w;
         const ny = lm[4].y * h;
-        lastNoseX = nx;
-        lastNoseY = ny;
 
         if (!neutralNose) {
           neutralNose = { x: nx, y: ny };
@@ -410,12 +441,10 @@ document.addEventListener("DOMContentLoaded", () => {
         const earR = (pDist(lm[385], lm[380]) + pDist(lm[387], lm[373])) / (2.0 * pDist(lm[362], lm[263]));
         const mar = pDist(lm[13], lm[14]) / pDist(lm[78], lm[308]);
 
-        // Invert yaw sign to match mirrored selfie view
-        const rawYaw = ((lm[4].x - (lm[33].x + lm[263].x) / 2) * 120);
-        const yaw = -rawYaw;
+        // Angle Telemetry
+        const yaw = ((lm[4].x - (lm[33].x + lm[263].x) / 2) * 120);
         const pitch = (((lm[4].y - (lm[33].y + lm[263].y) / 2) - 0.05) * 140);
 
-        // Update HTML Telemetry Bars
         valYaw.innerHTML = `${yaw > 0 ? "+" : ""}${yaw.toFixed(1)}&deg;`;
         valPitch.innerHTML = `${pitch > 0 ? "+" : ""}${pitch.toFixed(1)}&deg;`;
         meterYaw.style.width = `${Math.max(0, Math.min(100, (yaw + 30) / 60 * 100))}%`;
@@ -430,40 +459,24 @@ document.addEventListener("DOMContentLoaded", () => {
         const dy = ny - neutralNose.y;
         const distFromNeutral = Math.hypot(dx, dy);
 
-        // DRAW VISUAL FEEDBACK ON CANVAS:
-        // 1. Subtle Facial Geometry Points (Eyes & Mouth)
-        const eyeL_x = (1.0 - lm[33].x) * w;
-        const eyeL_y = lm[33].y * h;
-        const eyeR_x = (1.0 - lm[263].x) * w;
-        const eyeR_y = lm[263].y * h;
-        const mouth_x = (1.0 - lm[13].x) * w;
-        const mouth_y = lm[13].y * h;
-
-        ctx.fillStyle = "rgba(56, 189, 248, 0.6)";
-        [ [eyeL_x, eyeL_y], [eyeR_x, eyeR_y], [mouth_x, mouth_y] ].forEach(([px, py]) => {
-          ctx.beginPath();
-          ctx.arc(px, py, 3, 0, 2 * Math.PI);
-          ctx.fill();
-        });
-
-        // 2. Resting Neutral Center Anchor (Yellow Ring)
+        // 1. Resting Neutral Center Anchor (Yellow Ring)
         ctx.beginPath();
         ctx.arc(neutralNose.x, neutralNose.y, 6, 0, 2 * Math.PI);
-        ctx.strokeStyle = "rgba(245, 158, 11, 0.8)";
+        ctx.strokeStyle = "rgba(245, 158, 11, 0.85)";
         ctx.lineWidth = 2;
         ctx.stroke();
 
-        // 3. Direction Vector Line & Arrow (Showing Head Tilt)
-        if (distFromNeutral >= 6) {
+        // 2. Vector line from neutral to nose
+        if (distFromNeutral >= 5) {
           ctx.beginPath();
           ctx.moveTo(neutralNose.x, neutralNose.y);
           ctx.lineTo(nx, ny);
-          ctx.strokeStyle = isEngaged ? "#10b981" : "#f59e0b";
+          ctx.strokeStyle = isEngaged ? "rgba(16, 185, 129, 0.8)" : "rgba(245, 158, 11, 0.8)";
           ctx.lineWidth = 2.5;
           ctx.stroke();
         }
 
-        // 4. Glowing Green Tracking Dot on Nose Tip
+        // 3. Glowing Green Tracking Dot on Nose Tip
         const dotColor = isEngaged ? "#10b981" : "#38bdf8";
         ctx.beginPath();
         ctx.arc(nx, ny, 7.5, 0, 2 * Math.PI);
@@ -473,105 +486,88 @@ document.addEventListener("DOMContentLoaded", () => {
         ctx.lineWidth = 2;
         ctx.stroke();
 
-        // 5. Direction HUD Banner (Top Left)
-        let dirLabel = "🎯 CENTER (Neutral)";
-        if (distFromNeutral >= 8) {
-          const horiz = dx > 8 ? "RIGHT ➡️" : (dx < -8 ? "LEFT ⬅️" : "");
-          const vert = dy > 8 ? "DOWN ⬇️" : (dy < -8 ? "UP ⬆️" : "");
-          dirLabel = [horiz, vert].filter(Boolean).join(" + ");
-        }
+        // 4. Update Direction Badge
+        let horiz = "";
+        let vert = "";
+        if (dx < -6) horiz = "RIGHT ➡️";
+        else if (dx > 6) horiz = "LEFT ⬅️";
+        if (dy < -6) vert = "UP ⬆️";
+        else if (dy > 6) vert = "DOWN ⬇️";
 
-        ctx.fillStyle = "rgba(15, 23, 42, 0.85)";
-        ctx.roundRect ? ctx.roundRect(12, 12, 270, 48, 8) : ctx.rect(12, 12, 270, 48);
-        ctx.fill();
-        ctx.strokeStyle = "rgba(255, 255, 255, 0.15)";
-        ctx.stroke();
+        const dirText = [horiz, vert].filter(Boolean).join(" + ") || "🎯 CENTER (Neutral)";
+        if (motionDirectionText) motionDirectionText.textContent = dirText;
 
-        ctx.font = "bold 13px system-ui, sans-serif";
-        ctx.fillStyle = isEngaged ? "#10b981" : "#38bdf8";
-        ctx.fillText(`Motion: ${dirLabel}`, 22, 32);
-        ctx.font = "11px system-ui, sans-serif";
-        ctx.fillStyle = "#94a3b8";
-        ctx.fillText(`Yaw: ${yaw > 0 ? "+" : ""}${yaw.toFixed(1)}° | Pitch: ${pitch > 0 ? "+" : ""}${pitch.toFixed(1)}°`, 22, 50);
-
-        // 6. Clutch Engagement Badge (Top Right)
-        const clutchLabel = isEngaged ? "🟢 CONTROL ACTIVE" : "🔒 STANDBY (TAP SHIFT)";
-        const clutchColor = isEngaged ? "#10b981" : "#f59e0b";
-        ctx.fillStyle = "rgba(15, 23, 42, 0.85)";
-        const badgeW = 200;
-        ctx.roundRect ? ctx.roundRect(w - badgeW - 12, 12, badgeW, 32, 8) : ctx.rect(w - badgeW - 12, 12, badgeW, 32);
-        ctx.fill();
-        ctx.font = "bold 12px system-ui, sans-serif";
-        ctx.fillStyle = clutchColor;
-        ctx.fillText(clutchLabel, w - badgeW + 8, 32);
-
-        // 7. Dwell Click Accumulator Logic
-        let dwellProgress = 0.0;
-        if (isEngaged && now > dwellCooldownUntil) {
-          if (!dwellTargetPos) {
-            dwellTargetPos = { x: cursorX, y: cursorY };
-            dwellStartTime = now;
-          } else {
-            const cursorDist = Math.hypot(cursorX - dwellTargetPos.x, cursorY - dwellTargetPos.y);
-            if (cursorDist > 52.0) {
-              // User moved past anchor circle: reset anchor to new location
-              dwellTargetPos = { x: cursorX, y: cursorY };
-              dwellStartTime = now;
-            } else {
-              const elapsed = (now - dwellStartTime) / 1000.0;
-              dwellProgress = Math.min(1.0, elapsed / 0.95);
-
-              // 100% DWELL TRIGGERED
-              if (dwellProgress >= 1.0) {
-                executeDwellClick();
-                dwellProgress = 0.0;
-                dwellStartTime = null;
-                dwellTargetPos = null;
-                dwellCooldownUntil = now + 850;
-              }
-            }
-          }
-        } else {
-          dwellStartTime = null;
-          dwellTargetPos = null;
-        }
-
-        // Draw 360° Circular Dwell Accumulator Ring on Canvas
-        if (isEngaged && dwellProgress > 0.03) {
-          ctx.beginPath();
-          ctx.arc(nx, ny, 22, -Math.PI / 2, -Math.PI / 2 + dwellProgress * 2 * Math.PI);
-          ctx.strokeStyle = "#f59e0b";
-          ctx.lineWidth = 3.5;
-          ctx.stroke();
-        }
-
-        const dwellPercent = Math.round(dwellProgress * 100);
-        valDwellPercent.textContent = `${dwellPercent}%`;
-        dwellBarFill.style.width = `${dwellPercent}%`;
-
-        // 8. Virtual Cursor Steering Across Window
+        // 5. PRECISION VELOCITY-BASED CURSOR STEERING WITH DEADZONE
+        const DEADZONE = 6.5; // Natural resting tremor deadzone in pixels
         if (isEngaged) {
-          // Swift non-linear response curve
-          const absX = Math.abs(dx);
-          const absY = Math.abs(dy);
-          const accelX = 1.0 + 0.02 * Math.min(absX, 50.0);
-          const accelY = 1.0 + 0.02 * Math.min(absY, 40.0);
+          if (virtualCursor) {
+            virtualCursor.classList.add("visible", "engaged");
+            virtualCursor.classList.remove("locked");
+          }
 
-          const normX = Math.max(-1.0, Math.min(1.0, (dx / 44.0) * sensitivityMultiplier * accelX));
-          const normY = Math.max(-1.0, Math.min(1.0, (dy / 34.0) * sensitivityMultiplier * accelY));
+          if (distFromNeutral > DEADZONE) {
+            const excess = distFromNeutral - DEADZONE;
+            const accel = 1.0 + 0.025 * Math.min(excess, 45.0);
+            // Invert dx due to mirror selfie view: tilt right -> cursor glides right!
+            const vx = (-dx / distFromNeutral) * (excess / 16.0) * sensitivityMultiplier * accel * 14.0;
+            const vy = (dy / distFromNeutral) * (excess / 16.0) * sensitivityMultiplier * accel * 14.0;
 
-          const targetX = (normX * 0.5 + 0.5) * window.innerWidth;
-          const targetY = (normY * 0.5 + 0.5) * window.innerHeight;
+            cursorX += vx;
+            cursorY += vy;
 
-          // Smooth exponential moving average
-          cursorX = cursorX * 0.28 + targetX * 0.72;
-          cursorY = cursorY * 0.28 + targetY * 0.72;
+            // Clamp cursor to viewport bounds
+            cursorX = Math.max(16, Math.min(window.innerWidth - 16, cursorX));
+            cursorY = Math.max(16, Math.min(window.innerHeight - 16, cursorY));
+          }
 
           if (virtualCursor) {
             virtualCursor.style.left = `${cursorX}px`;
             virtualCursor.style.top = `${cursorY}px`;
-            virtualCursor.classList.add("active");
           }
+
+          // DWELL CLICK ACCUMULATOR LOGIC
+          let dwellProgress = 0.0;
+          if (now > dwellCooldownUntil) {
+            if (!dwellTargetPos) {
+              dwellTargetPos = { x: cursorX, y: cursorY };
+              dwellStartTime = now;
+            } else {
+              const drift = Math.hypot(cursorX - dwellTargetPos.x, cursorY - dwellTargetPos.y);
+              if (drift > 38.0) {
+                // Moved outside resting radius: reset dwell anchor
+                dwellTargetPos = { x: cursorX, y: cursorY };
+                dwellStartTime = now;
+              } else {
+                const elapsed = (now - dwellStartTime) / 1000.0;
+                dwellProgress = Math.min(1.0, elapsed / 0.85);
+
+                // 100% DWELL TRIGGERED
+                if (dwellProgress >= 1.0) {
+                  executeDwellClick();
+                  dwellProgress = 0.0;
+                  dwellStartTime = null;
+                  dwellTargetPos = null;
+                  dwellCooldownUntil = now + 800; // 0.8s cooldown
+                }
+              }
+            }
+          } else {
+            dwellStartTime = null;
+            dwellTargetPos = null;
+          }
+
+          // Draw Dwell Ring around Nose Dot on Canvas
+          if (dwellProgress > 0.02) {
+            ctx.beginPath();
+            ctx.arc(nx, ny, 22, -Math.PI / 2, -Math.PI / 2 + dwellProgress * 2 * Math.PI);
+            ctx.strokeStyle = "#f59e0b";
+            ctx.lineWidth = 3.5;
+            ctx.stroke();
+          }
+
+          const dwellVal = Math.round(dwellProgress * 100);
+          valDwellPercent.textContent = `${dwellVal}%`;
+          dwellBarFill.style.width = `${dwellVal}%`;
 
           // Facial Gestures (Wink & Mouth Open)
           if (now - lastActionTime > 1300) {
@@ -586,17 +582,24 @@ document.addEventListener("DOMContentLoaded", () => {
             }
           }
         } else {
-          // Disengaged (Safety Standby)
-          if (virtualCursor) virtualCursor.classList.remove("active");
+          // Locked / Standby Mode
+          if (virtualCursor) {
+            virtualCursor.classList.add("visible", "locked");
+            virtualCursor.classList.remove("engaged");
+            virtualCursor.style.left = `${cursorX}px`;
+            virtualCursor.style.top = `${cursorY}px`;
+          }
+          valDwellPercent.textContent = "0%";
+          dwellBarFill.style.width = "0%";
         }
 
       } else {
-        // NO FACE DETECTED: Show search guide & NEVER move the cursor!
+        // NO FACE DETECTED: Show search oval & freeze cursor completely!
         cameraStatusDot.className = "status-indicator searching";
+        if (motionDirectionText) motionDirectionText.textContent = "👁️ Searching Face...";
         valDwellPercent.textContent = "0%";
         dwellBarFill.style.width = "0%";
 
-        // Draw face placement oval
         ctx.save();
         ctx.strokeStyle = "rgba(245, 158, 11, 0.75)";
         ctx.lineWidth = 2.5;
@@ -605,20 +608,6 @@ document.addEventListener("DOMContentLoaded", () => {
         ctx.ellipse(w / 2, h / 2, w * 0.22, h * 0.35, 0, 0, 2 * Math.PI);
         ctx.stroke();
         ctx.restore();
-
-        // Overlay Message
-        ctx.fillStyle = "rgba(15, 23, 42, 0.85)";
-        ctx.roundRect ? ctx.roundRect(w / 2 - 160, h - 54, 320, 38, 8) : ctx.rect(w / 2 - 160, h - 54, 320, 38);
-        ctx.fill();
-
-        ctx.font = "bold 13px system-ui, sans-serif";
-        ctx.fillStyle = "#f59e0b";
-        ctx.textAlign = "center";
-        ctx.fillText("👁️ Please center your face in the camera frame", w / 2, h - 30);
-        ctx.textAlign = "left";
-
-        // Virtual cursor remains inactive when face is not seen
-        if (virtualCursor) virtualCursor.classList.remove("active");
       }
     }
 
