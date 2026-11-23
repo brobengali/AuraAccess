@@ -64,6 +64,12 @@ document.addEventListener("DOMContentLoaded", () => {
   const cameraPromptOverlay = document.getElementById("cameraPromptOverlay");
   const btnRequestCamera = document.getElementById("btnRequestCamera");
   const virtualCursor = document.getElementById("virtualCursor");
+  const isLocalhost = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+  const systemModeBanner = document.getElementById("systemModeBanner");
+  const systemModeBadge = document.getElementById("systemModeBadge");
+  const systemModeDesc = document.getElementById("systemModeDesc");
+  const localVideoFeed = document.getElementById("localVideoFeed");
+  const streamBadgeText = document.getElementById("streamBadgeText");
 
   // Modal Elements
   const newProfileModal = document.getElementById("newProfileModal");
@@ -771,7 +777,104 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
+  // 6. Native Localhost WebSocket & System-Wide OS Control
+  function connectLocalWebSocket() {
+    const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const wsUrl = `${wsProtocol}//${window.location.host}/ws/telemetry`;
+    const socket = new WebSocket(wsUrl);
+
+    socket.onopen = () => {
+      console.log("Connected to native AuraAccess Windows service.");
+      if (systemModeBanner) {
+        systemModeBanner.className = "system-mode-banner local-mode";
+        if (systemModeBadge) systemModeBadge.textContent = "🟢 FULL SYSTEM OS CONTROL";
+        if (systemModeDesc) systemModeDesc.innerHTML = "Physical Windows cursor active! You can minimize this browser, open outside apps (Spotify, Word, Desktop icons), and navigate your entire PC.";
+      }
+      if (localVideoFeed) {
+        localVideoFeed.src = "/video_feed";
+        localVideoFeed.style.display = "block";
+      }
+      if (clientVideo) clientVideo.style.display = "none";
+      if (trackingCanvas) trackingCanvas.style.display = "none";
+      if (cameraPromptOverlay) cameraPromptOverlay.classList.add("hidden");
+      if (cameraStatusDot) cameraStatusDot.className = "status-indicator active";
+      if (virtualCursor) virtualCursor.style.display = "none";
+      if (streamBadgeText) streamBadgeText.textContent = "LIVE SYSTEM STREAM";
+    };
+
+    socket.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        handleLocalTelemetry(data);
+      } catch (e) {}
+    };
+
+    socket.onclose = () => {
+      setTimeout(connectLocalWebSocket, 2500);
+    };
+
+    socket.onerror = () => {
+      socket.close();
+    };
+  }
+
+  function handleLocalTelemetry(data) {
+    if (data.face_detected) {
+      cameraStatusDot.className = "status-indicator active";
+    } else {
+      cameraStatusDot.className = "status-indicator searching";
+    }
+
+    fpsBadge.textContent = `${data.fps || 0.0} FPS`;
+
+    valYaw.innerHTML = `${data.yaw > 0 ? "+" : ""}${data.yaw}&deg;`;
+    valPitch.innerHTML = `${data.pitch > 0 ? "+" : ""}${data.pitch}&deg;`;
+    meterYaw.style.width = `${Math.max(0, Math.min(100, (data.yaw + 30) / 60 * 100))}%`;
+    meterPitch.style.width = `${Math.max(0, Math.min(100, (data.pitch + 25) / 50 * 100))}%`;
+
+    valEarL.textContent = data.ear_left.toFixed(3);
+    valEarR.textContent = data.ear_right.toFixed(3);
+    meterEarL.style.width = `${Math.min(100, data.ear_left * 250)}%`;
+    meterEarR.style.width = `${Math.min(100, data.ear_right * 250)}%`;
+
+    const dwellVal = Math.round((data.dwell_progress || 0) * 100);
+    valDwellPercent.textContent = `${dwellVal}%`;
+    dwellBarFill.style.width = `${dwellVal}%`;
+
+    if (data.active_app_title && detectedAppTitle) {
+      detectedAppTitle.textContent = data.active_app_title;
+    }
+    if (data.active_app_category && detectedAppCategory) {
+      detectedAppCategory.textContent = data.active_app_category;
+    }
+
+    updateClutchUI(data.engaged);
+
+    if (motionDirectionText) {
+      let dir = "🎯 CENTER (Neutral)";
+      if (data.yaw > 6) dir = "RIGHT ➡️";
+      else if (data.yaw < -6) dir = "LEFT ⬅️";
+      if (data.pitch > 6) dir += (dir === "🎯 CENTER (Neutral)" ? "" : " + ") + "DOWN ⬇️";
+      else if (data.pitch < -6) dir += (dir === "🎯 CENTER (Neutral)" ? "" : " + ") + "UP ⬆️";
+      motionDirectionText.textContent = dir;
+    }
+
+    if (data.active_action) {
+      triggerActionToast(data.active_action);
+    }
+  }
+
   // Initial Boot
   loadProfiles();
-  initWebcam();
+  if (isLocalhost) {
+    connectLocalWebSocket();
+  } else {
+    // Cloud / Vercel Mode: In-Browser WebRTC Showcase
+    if (systemModeBanner) {
+      systemModeBanner.className = "system-mode-banner cloud-mode";
+      if (systemModeBadge) systemModeBadge.textContent = "🌐 WEB PREVIEW MODE";
+      if (systemModeDesc) systemModeDesc.innerHTML = "In-Browser Web Showcase. Browser security policies sandbox websites inside tabs. For full Windows desktop control over external apps (Spotify, Word, Desktop icons), run <strong>START_AURA_ACCESS.bat</strong> on your PC.";
+    }
+    initWebcam();
+  }
 });

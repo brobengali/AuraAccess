@@ -75,6 +75,14 @@
     </div>
   </section>
 
+  <!-- System Operating Mode Notification Banner -->
+  <div id="systemModeBanner" class="system-mode-banner">
+    <div class="mode-info">
+      <span class="mode-badge" id="systemModeBadge">🌐 Web Preview Mode</span>
+      <span id="systemModeDesc">In-Browser Testing. To control your whole Windows PC, desktop icons, &amp; outside apps, run <strong>START_AURA_ACCESS.bat</strong> on your computer.</span>
+    </div>
+  </div>
+
   <!-- Main Application Workspace -->
   <main class="dashboard-grid">
 
@@ -94,6 +102,7 @@
       <!-- Live Camera Video Feed -->
       <div class="video-stream-container" id="videoStreamWrapper">
         <video id="clientVideo" autoplay playsinline muted class="camera-stream-video"></video>
+        <img id="localVideoFeed" class="camera-stream-img" style="display: none;" alt="Native Local Video Stream">
         <canvas id="trackingCanvas" class="camera-tracking-canvas"></canvas>
         <div class="stream-overlay-badge" id="streamBadge">
           <span class="live-dot"></span> LIVE CAMERA STREAM
