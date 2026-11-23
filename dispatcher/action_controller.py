@@ -9,11 +9,18 @@ Guarantees physical mouse control on the interactive desktop:
 import time
 import ctypes
 from ctypes import wintypes
-import winsound
+try:
+    import winsound
+except ImportError:
+    winsound = None
 import pyautogui
 from config.schema import DispatcherConfig
 
-user32 = ctypes.windll.user32
+try:
+    user32 = ctypes.windll.user32
+except (AttributeError, Exception):
+    user32 = None
+
 pyautogui.FAILSAFE = False
 pyautogui.PAUSE = 0.01
 
@@ -39,6 +46,8 @@ VK_MAP = {
 
 def is_hotkey_down(hotkey_name: str) -> bool:
     """Checks whether the specified clutch/engagement hotkey is physically pressed down."""
+    if not user32:
+        return False
     vk = VK_MAP.get(hotkey_name.lower().strip(), 0x10)
     try:
         return (user32.GetAsyncKeyState(vk) & 0x8000) != 0
@@ -48,6 +57,8 @@ def is_hotkey_down(hotkey_name: str) -> bool:
 
 def attach_to_interactive_desktop():
     """Attaches current thread to Windows interactive user desktop (WinSta0\\default)."""
+    if not user32:
+        return
     try:
         hwinsta = user32.OpenWindowStationW('WinSta0', False, 0x037F)
         if hwinsta:
@@ -67,8 +78,12 @@ class ActionDispatcher:
         self.is_active = True
 
         attach_to_interactive_desktop()
-        self.screen_width = max(100, user32.GetSystemMetrics(0))
-        self.screen_height = max(100, user32.GetSystemMetrics(1))
+        if user32:
+            self.screen_width = max(100, user32.GetSystemMetrics(0))
+            self.screen_height = max(100, user32.GetSystemMetrics(1))
+        else:
+            self.screen_width = 1920
+            self.screen_height = 1080
 
     def set_active(self, active: bool):
         self.is_active = active

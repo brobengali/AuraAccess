@@ -17,21 +17,31 @@ class ActiveAppContext(NamedTuple):
 
 
 # Win32 API functions
-user32 = ctypes.windll.user32
-kernel32 = ctypes.windll.kernel32
+try:
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+except (AttributeError, Exception):
+    user32 = None
+    kernel32 = None
 
 
 def get_active_window_context() -> ActiveAppContext:
     """Returns the title and category of the foreground application."""
-    hwnd = user32.GetForegroundWindow()
-    if not hwnd:
-        return ActiveAppContext(title="Desktop", process_name="explorer.exe", category="desktop")
+    if not user32:
+        return ActiveAppContext(title="AuraAccess Web", process_name="web", category="general")
 
-    # Get Window Title
-    length = user32.GetWindowTextLengthW(hwnd)
-    buff = ctypes.create_unicode_buffer(length + 1)
-    user32.GetWindowTextW(hwnd, buff, length + 1)
-    window_title = buff.value or "Unknown"
+    try:
+        hwnd = user32.GetForegroundWindow()
+        if not hwnd:
+            return ActiveAppContext(title="Desktop", process_name="explorer.exe", category="desktop")
+
+        # Get Window Title
+        length = user32.GetWindowTextLengthW(hwnd)
+        buff = ctypes.create_unicode_buffer(length + 1)
+        user32.GetWindowTextW(hwnd, buff, length + 1)
+        window_title = buff.value or "Unknown"
+    except Exception:
+        return ActiveAppContext(title="Desktop", process_name="explorer.exe", category="desktop")
 
     # Identify App Category from Window Title or Process
     title_lower = window_title.lower()

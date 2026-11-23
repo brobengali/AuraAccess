@@ -28,6 +28,12 @@ from calibration.calibrator import CalibrationProfile
 from dispatcher.action_controller import ActionDispatcher
 from core.state_machine import GestureStateMachine, SystemState
 
+# Export ASGI app for Vercel / Cloud deployments
+try:
+    from server.api import app
+except Exception:
+    app = None
+
 
 def run_system(config_path: str = "config/default_config.yaml", profile_path: str = "config/user_profile.json"):
     # 1. Load validated configuration
