@@ -12,21 +12,39 @@ from typing import List, Dict, Any
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse, Response
 from pydantic import BaseModel
 
 from server.state import TrackingEngineService
 from server.profile_store import UserProfileData
 
+IS_VERCEL = bool(os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"))
+
 app = FastAPI(title="Hands-Free Accessibility System", version="2.0.0")
 
 # Initialize central tracking engine service
 engine = TrackingEngineService()
-engine.start_background_service()
+if not IS_VERCEL:
+    engine.start_background_service()
+else:
+    # Seed cloud demo telemetry state
+    engine.latest_telemetry.update({
+        "face_detected": True,
+        "yaw": 1.2,
+        "pitch": 0.5,
+        "ear_left": 0.28,
+        "ear_right": 0.28,
+        "fps": 30.0,
+        "active_app_title": "Cloud Demo Preview",
+        "active_app_category": "general"
+    })
 
 # Static directory setup
 web_dir = Path(__file__).resolve().parent.parent / "web"
-web_dir.mkdir(parents=True, exist_ok=True)
+try:
+    web_dir.mkdir(parents=True, exist_ok=True)
+except Exception:
+    pass
 
 
 class ToggleTrackingRequest(BaseModel):
@@ -73,6 +91,17 @@ def generate_camera_stream():
 @app.get("/video_feed")
 def video_feed():
     """Live camera video feed endpoint."""
+    if IS_VERCEL:
+        svg_placeholder = """<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480" viewBox="0 0 640 480">
+  <rect width="640" height="480" fill="#0f172a"/>
+  <circle cx="320" cy="220" r="50" fill="#1e293b" stroke="#3b82f6" stroke-width="2"/>
+  <circle cx="320" cy="220" r="6" fill="#10b981"/>
+  <text x="320" y="310" font-family="system-ui, sans-serif" font-size="16" font-weight="bold" fill="#f8fafc" text-anchor="middle">AuraAccess Cloud Demo</text>
+  <text x="320" y="340" font-family="system-ui, sans-serif" font-size="13" fill="#94a3b8" text-anchor="middle">Live camera tracking &amp; cursor injection run locally on Windows</text>
+  <text x="320" y="365" font-family="system-ui, sans-serif" font-size="12" fill="#64748b" text-anchor="middle">Clone and run with 'python run_app.py' on PC</text>
+</svg>"""
+        return Response(content=svg_placeholder, media_type="image/svg+xml")
+
     return StreamingResponse(
         generate_camera_stream(),
         media_type="multipart/x-mixed-replace; boundary=frame"

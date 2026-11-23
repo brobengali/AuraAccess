@@ -28,11 +28,24 @@ from server.app_detector import get_active_window_context
 from server.profile_store import ProfileStore, UserProfileData
 
 
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+
 class TrackingEngineService:
-    def __init__(self, config_path: str = "config/default_config.yaml"):
-        self.config_path = config_path
-        self.cfg = AppConfig.load_from_yaml(config_path)
-        self.profile_store = ProfileStore("profiles")
+    def __init__(self, config_path: Optional[str | Path] = None):
+        if config_path is None:
+            self.config_path = BASE_DIR / "config" / "default_config.yaml"
+        else:
+            self.config_path = Path(config_path)
+            if not self.config_path.is_absolute():
+                self.config_path = BASE_DIR / self.config_path
+
+        try:
+            self.cfg = AppConfig.load_from_yaml(self.config_path)
+        except Exception:
+            self.cfg = AppConfig()
+
+        self.profile_store = ProfileStore(BASE_DIR / "profiles")
 
         # Load active profile
         profiles = self.profile_store.list_profiles()
@@ -126,6 +139,9 @@ class TrackingEngineService:
             self.latest_telemetry["sensitivity"] = self.sensitivity_multiplier
 
     def start_background_service(self):
+        # Do not start camera thread in serverless cloud environments (Vercel / Lambda)
+        if os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
+            return
         if self.is_running:
             return
         self.is_running = True

@@ -48,10 +48,22 @@ class UserProfileData(BaseModel):
     )
 
 
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+
 class ProfileStore:
-    def __init__(self, profiles_dir: Path | str = "profiles"):
-        self.profiles_dir = Path(profiles_dir)
-        self.profiles_dir.mkdir(parents=True, exist_ok=True)
+    def __init__(self, profiles_dir: Optional[Path | str] = None):
+        if profiles_dir is None:
+            self.profiles_dir = BASE_DIR / "profiles"
+        else:
+            self.profiles_dir = Path(profiles_dir)
+            if not self.profiles_dir.is_absolute():
+                self.profiles_dir = BASE_DIR / self.profiles_dir
+
+        try:
+            self.profiles_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
         self._ensure_default_profile()
 
     def _sanitize_id(self, name: str) -> str:
@@ -60,8 +72,8 @@ class ProfileStore:
 
     def _ensure_default_profile(self):
         # Check if any profile exists, if user_profile.json exists in config, migrate it!
-        existing = list(self.profiles_dir.glob("*.json"))
-        legacy_file = Path("config/user_profile.json")
+        existing = list(self.profiles_dir.glob("*.json")) if self.profiles_dir.exists() else []
+        legacy_file = BASE_DIR / "config" / "user_profile.json"
 
         if not existing and legacy_file.exists():
             try:
@@ -87,35 +99,48 @@ class ProfileStore:
 
     def list_profiles(self) -> List[UserProfileData]:
         profiles = []
-        for p in self.profiles_dir.glob("*.json"):
-            try:
-                with open(p, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                profiles.append(UserProfileData(**data))
-            except Exception:
-                continue
+        if self.profiles_dir.exists():
+            for p in self.profiles_dir.glob("*.json"):
+                try:
+                    with open(p, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    profiles.append(UserProfileData(**data))
+                except Exception:
+                    continue
+        if not profiles:
+            profiles.append(UserProfileData(id="primary_user", name="Primary User", calibrated=True))
         return sorted(profiles, key=lambda x: x.name)
 
     def get_profile(self, profile_id: str) -> Optional[UserProfileData]:
         p = self.profiles_dir / f"{self._sanitize_id(profile_id)}.json"
         if not p.exists():
             return None
-        with open(p, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return UserProfileData(**data)
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return UserProfileData(**data)
+        except Exception:
+            return None
 
     def save_profile(self, profile: UserProfileData) -> UserProfileData:
         clean_id = self._sanitize_id(profile.id)
         profile.id = clean_id
-        target = self.profiles_dir / f"{clean_id}.json"
-        with open(target, "w", encoding="utf-8") as f:
-            f.write(profile.model_dump_json(indent=2))
+        try:
+            self.profiles_dir.mkdir(parents=True, exist_ok=True)
+            target = self.profiles_dir / f"{clean_id}.json"
+            with open(target, "w", encoding="utf-8") as f:
+                f.write(profile.model_dump_json(indent=2))
+        except Exception:
+            pass  # Cloud/serverless read-only filesystem
         return profile
 
     def delete_profile(self, profile_id: str) -> bool:
         clean_id = self._sanitize_id(profile_id)
         target = self.profiles_dir / f"{clean_id}.json"
-        if target.exists():
-            target.unlink()
-            return True
+        try:
+            if target.exists():
+                target.unlink()
+                return True
+        except Exception:
+            pass
         return False

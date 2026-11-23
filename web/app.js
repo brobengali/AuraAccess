@@ -257,14 +257,44 @@ document.addEventListener("DOMContentLoaded", () => {
     // Calibration can be run locally via terminal or triggered
   });
 
-  // 9. WebSocket Live Telemetry Connection (25Hz Stream)
+  // 9. Telemetry Connection (WebSocket with HTTP polling fallback for Vercel/Cloud)
+  let wsRetryCount = 0;
+  let pollingInterval = null;
+
+  function startHttpPolling() {
+    if (pollingInterval) return;
+    pollingInterval = setInterval(async () => {
+      try {
+        const res = await fetch("/api/status");
+        if (res.ok) {
+          const data = await res.json();
+          renderTelemetry(data);
+        }
+      } catch (e) {
+        // silent catch
+      }
+    }, 800);
+  }
+
   function connectWebSocket() {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${protocol}//${window.location.host}/ws/telemetry`;
-    const ws = new WebSocket(wsUrl);
+    let ws = null;
+
+    try {
+      ws = new WebSocket(wsUrl);
+    } catch (e) {
+      startHttpPolling();
+      return;
+    }
 
     ws.onopen = () => {
-      console.log("WebSocket connected to local AuraAccess telemetry.");
+      console.log("WebSocket connected to AuraAccess telemetry.");
+      wsRetryCount = 0;
+      if (pollingInterval) {
+        clearInterval(pollingInterval);
+        pollingInterval = null;
+      }
     };
 
     ws.onmessage = (event) => {
@@ -277,8 +307,13 @@ document.addEventListener("DOMContentLoaded", () => {
     };
 
     ws.onclose = () => {
-      console.warn("WebSocket closed. Reconnecting in 2s...");
-      setTimeout(connectWebSocket, 2000);
+      wsRetryCount++;
+      if (wsRetryCount > 2) {
+        // Fallback to HTTP polling (e.g. on serverless Vercel)
+        startHttpPolling();
+      } else {
+        setTimeout(connectWebSocket, 2000);
+      }
     };
 
     ws.onerror = () => {
