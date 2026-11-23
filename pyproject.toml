@@ -1,2 +1,18 @@
+[project]
+name = "auraaccess"
+version = "2.0.0"
+description = "Hands-Free Accessibility System"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.100.0",
+    "uvicorn>=0.22.0",
+    "pydantic>=2.0.0",
+    "pyyaml>=6.0",
+    "numpy>=1.24.0",
+    "opencv-python-headless>=4.8.0",
+    "websockets>=11.0",
+    "pyautogui>=0.9.54",
+]
+
 [tool.vercel]
 entrypoint = "server.api:app"
