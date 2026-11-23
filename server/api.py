@@ -88,15 +88,7 @@ def generate_camera_stream():
 def video_feed():
     """Live camera video feed endpoint."""
     if IS_VERCEL:
-        svg_placeholder = """<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480" viewBox="0 0 640 480">
-  <rect width="640" height="480" fill="#0f172a"/>
-  <circle cx="320" cy="220" r="50" fill="#1e293b" stroke="#3b82f6" stroke-width="2"/>
-  <circle cx="320" cy="220" r="6" fill="#10b981"/>
-  <text x="320" y="310" font-family="system-ui, sans-serif" font-size="16" font-weight="bold" fill="#f8fafc" text-anchor="middle">AuraAccess Cloud Demo</text>
-  <text x="320" y="340" font-family="system-ui, sans-serif" font-size="13" fill="#94a3b8" text-anchor="middle">Live camera tracking &amp; cursor injection run locally on Windows</text>
-  <text x="320" y="365" font-family="system-ui, sans-serif" font-size="12" fill="#64748b" text-anchor="middle">Clone and run with 'python run_app.py' on PC</text>
-</svg>"""
-        return Response(content=svg_placeholder, media_type="image/svg+xml")
+        return Response(status_code=204)
 
     return StreamingResponse(
         generate_camera_stream(),

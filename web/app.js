@@ -224,15 +224,50 @@ document.addEventListener("DOMContentLoaded", () => {
 
   async function initWebcam() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      cameraPromptOverlay?.classList.remove("hidden");
+      if (cameraPromptOverlay) {
+        cameraPromptOverlay.classList.remove("hidden");
+        const desc = cameraPromptOverlay.querySelector(".prompt-desc");
+        if (desc) desc.textContent = "Your browser does not support webcam media devices.";
+      }
+      return;
+    }
+
+    const constraintsCandidates = [
+      { video: { width: { ideal: 640 }, height: { ideal: 480 } }, audio: false },
+      { video: true, audio: false }
+    ];
+
+    let stream = null;
+    let lastError = null;
+
+    for (const constraints of constraintsCandidates) {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+        if (stream) break;
+      } catch (err) {
+        lastError = err;
+      }
+    }
+
+    if (!stream) {
+      console.warn("Camera access failed or waiting for user permission:", lastError);
+      if (cameraPromptOverlay) {
+        cameraPromptOverlay.classList.remove("hidden");
+        const desc = cameraPromptOverlay.querySelector(".prompt-desc");
+        if (desc) {
+          if (lastError && lastError.name === "NotReadableError") {
+            desc.textContent = "Your camera was in use by another app. Now released! Click below to start video.";
+          } else if (lastError && lastError.name === "NotAllowedError") {
+            desc.textContent = "Camera permission was dismissed. Please allow camera in your browser address bar and click below.";
+          } else {
+            desc.textContent = "Click below to grant camera access. Your real-time video will appear right here.";
+          }
+        }
+      }
       return;
     }
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" },
-        audio: false
-      });
       clientVideo.muted = true;
       clientVideo.defaultMuted = true;
       clientVideo.playsInline = true;
@@ -244,35 +279,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
       cameraPromptOverlay?.classList.add("hidden");
       cameraStatusDot.className = "status-indicator active";
-      
+
       // Auto-engage so visitor immediately has active control
       setEngagementState(true);
-      
-      initFaceTracking();
-    } catch (err) {
-      console.warn("Camera access waiting for user permission or denied:", err);
-      // Fallback: check if local /video_feed is available from python
-      checkLocalVideoFallback();
-    }
-  }
 
-  function checkLocalVideoFallback() {
-    const fallbackImg = document.getElementById("fallbackImgFeed");
-    if (fallbackImg) {
-      const testImg = new Image();
-      testImg.onload = () => {
-        fallbackImg.src = "/video_feed";
-        fallbackImg.style.display = "block";
-        clientVideo.style.display = "none";
-        cameraPromptOverlay?.classList.add("hidden");
-        cameraStatusDot.className = "status-indicator active";
-        setEngagementState(true);
-      };
-      testImg.onerror = () => {
-        cameraPromptOverlay?.classList.remove("hidden");
-      };
-      testImg.src = "/video_feed?" + Date.now();
-    } else {
+      initFaceTracking();
+    } catch (playErr) {
+      console.warn("Video play error:", playErr);
       cameraPromptOverlay?.classList.remove("hidden");
     }
   }
