@@ -207,11 +207,11 @@ body {
 /* Dashboard Grid */
 .dashboard-grid {
   display: grid;
-  grid-template-columns: 1fr 1.2fr;
-  gap: 24px;
-  max-width: 1200px;
+  grid-template-columns: 1.25fr 1fr;
+  gap: 28px;
+  max-width: 1320px;
   margin: 0 auto;
-  padding: 0 32px;
+  padding: 0 24px;
 }
 
 @media (max-width: 900px) {
@@ -281,33 +281,29 @@ body {
 .video-stream-container {
   position: relative;
   width: 100%;
-  height: 240px;
-  background-color: #000;
+  height: 330px;
+  min-height: 280px;
+  max-height: 380px;
+  background-color: #0b0f19;
   border-radius: var(--radius-md);
   overflow: hidden;
-  border: 1px solid var(--border-subtle);
-  margin-bottom: 14px;
+  border: 1.5px solid var(--border-subtle);
+  margin-bottom: 16px;
   display: flex;
   align-items: center;
   justify-content: center;
+  box-shadow: inset 0 0 30px rgba(0, 0, 0, 0.7);
 }
 
 .camera-stream-video {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  transform: scaleX(-1);
-  display: block;
+  display: none !important;
 }
 
 .camera-tracking-canvas {
-  position: absolute;
-  top: 0;
-  left: 0;
   width: 100%;
   height: 100%;
-  pointer-events: none;
-  transform: scaleX(-1);
+  object-fit: cover;
+  display: block;
 }
 
 .camera-prompt-overlay {

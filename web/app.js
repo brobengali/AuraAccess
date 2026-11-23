@@ -184,10 +184,39 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // 2. Client Webcam Capture
+  // 2. Client Webcam Capture & Tracking Controller
+  function setTrackingState(enabled) {
+    isTracking = enabled;
+    if (btnToggleTracking) {
+      if (isTracking) {
+        btnToggleTracking.className = "btn btn-toggle on";
+        const txt = btnToggleTracking.querySelector(".toggle-text");
+        if (txt) txt.textContent = "Tracking ON";
+        triggerActionToast("Tracking Controller: ACTIVE");
+        playTone(880, 60);
+      } else {
+        btnToggleTracking.className = "btn btn-toggle off";
+        const txt = btnToggleTracking.querySelector(".toggle-text");
+        if (txt) txt.textContent = "Tracking OFF";
+        triggerActionToast("Tracking Controller: PAUSED");
+        playTone(440, 80);
+        if (virtualCursor) virtualCursor.classList.remove("active");
+      }
+    }
+    fetch("/api/tracking/toggle", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: isTracking })
+    }).catch(() => {});
+  }
+
+  btnToggleTracking?.addEventListener("click", () => {
+    setTrackingState(!isTracking);
+  });
+
   async function initWebcam() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      cameraPromptOverlay.classList.remove("hidden");
+      cameraPromptOverlay?.classList.remove("hidden");
       return;
     }
 
@@ -197,13 +226,15 @@ document.addEventListener("DOMContentLoaded", () => {
         audio: false
       });
       clientVideo.srcObject = stream;
+      clientVideo.muted = true;
+      clientVideo.setAttribute("playsinline", "true");
       await clientVideo.play();
-      cameraPromptOverlay.classList.add("hidden");
+      cameraPromptOverlay?.classList.add("hidden");
       cameraStatusDot.className = "status-indicator active";
       initFaceTracking();
     } catch (err) {
       console.warn("Camera access waiting for user permission:", err);
-      cameraPromptOverlay.classList.remove("hidden");
+      cameraPromptOverlay?.classList.remove("hidden");
     }
   }
 
@@ -213,14 +244,21 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // 3. Client-Side Real-Time Face Landmark Tracking
   let neutralNose = null;
+  let lastNoseX = null;
+  let lastNoseY = null;
   let cursorX = window.innerWidth / 2;
   let cursorY = window.innerHeight / 2;
   let dwellStartTime = null;
   let dwellCooldownUntil = 0;
   let dwellTargetPos = null;
   let lastActionTime = 0;
+  let lastActionTimer = null;
   let fpsCount = 0;
   let fpsTimer = performance.now();
+  let faceMesh = null;
+  let isProcessingMesh = false;
+  let lastLandmarks = null;
+  let lastLandmarkTimestamp = 0;
 
   function triggerActionToast(actionName) {
     if (actionFeedback && actionFeedbackText) {
@@ -235,9 +273,8 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function initFaceTracking() {
-    // If MediaPipe FaceMesh CDN is loaded, use full 468 landmark mesh
-    if (window.FaceMesh) {
-      const faceMesh = new window.FaceMesh({
+    if (window.FaceMesh && !faceMesh) {
+      faceMesh = new window.FaceMesh({
         locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
       });
 
@@ -248,78 +285,24 @@ document.addEventListener("DOMContentLoaded", () => {
         minTrackingConfidence: 0.5
       });
 
-      faceMesh.onResults(onFaceMeshResults);
-
-      if (window.Camera) {
-        const camera = new window.Camera(clientVideo, {
-          onFrame: async () => {
-            await faceMesh.send({ image: clientVideo });
-          },
-          width: 640,
-          height: 480
-        });
-        camera.start();
-        return;
-      }
+      faceMesh.onResults((results) => {
+        if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+          lastLandmarks = results.multiFaceLandmarks[0];
+          lastLandmarkTimestamp = performance.now();
+        } else {
+          lastLandmarks = null;
+        }
+      });
     }
 
-    // Direct Canvas/Video frame loop fallback if CDN loads progressively
-    requestAnimationFrame(fallbackTrackingLoop);
-  }
-
-  function onFaceMeshResults(results) {
-    updateFPS();
-    const ctx = trackingCanvas.getContext("2d");
-    trackingCanvas.width = clientVideo.videoWidth || 640;
-    trackingCanvas.height = clientVideo.videoHeight || 480;
-    ctx.clearRect(0, 0, trackingCanvas.width, trackingCanvas.height);
-
-    if (!results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0) {
-      cameraStatusDot.className = "status-indicator searching";
-      return;
-    }
-
-    cameraStatusDot.className = "status-indicator active";
-    const lm = results.multiFaceLandmarks[0];
-
-    // Nose tip (Landmark 4)
-    const nx = lm[4].x * trackingCanvas.width;
-    const ny = lm[4].y * trackingCanvas.height;
-
-    // EAR Left (33, 160, 158, 133, 153, 144)
-    const earL = (pDist(lm[160], lm[144]) + pDist(lm[158], lm[153])) / (2.0 * pDist(lm[33], lm[133]));
-    // EAR Right (362, 385, 387, 263, 373, 380)
-    const earR = (pDist(lm[385], lm[380]) + pDist(lm[387], lm[373])) / (2.0 * pDist(lm[362], lm[263]));
-    // Mouth MAR (13, 14, 78, 308)
-    const mar = pDist(lm[13], lm[14]) / pDist(lm[78], lm[308]);
-
-    // Head orientation estimation (Pitch & Yaw)
-    const yaw = ((lm[4].x - (lm[33].x + lm[263].x) / 2) * 120);
-    const pitch = (((lm[4].y - (lm[33].y + lm[263].y) / 2) - 0.05) * 140);
-
-    processTrackingFrame(ctx, nx, ny, yaw, pitch, earL, earR, mar);
+    // Unified single 60 FPS render and tracking loop
+    requestAnimationFrame(trackingRenderLoop);
   }
 
   function pDist(p1, p2) {
     const dx = p1.x - p2.x;
     const dy = p1.y - p2.y;
     return Math.sqrt(dx * dx + dy * dy);
-  }
-
-  function fallbackTrackingLoop() {
-    if (clientVideo.readyState >= 2) {
-      updateFPS();
-      const ctx = trackingCanvas.getContext("2d");
-      trackingCanvas.width = clientVideo.videoWidth || 640;
-      trackingCanvas.height = clientVideo.videoHeight || 480;
-      ctx.clearRect(0, 0, trackingCanvas.width, trackingCanvas.height);
-
-      // Lightweight center-face tracking fallback
-      const nx = trackingCanvas.width * 0.5;
-      const ny = trackingCanvas.height * 0.46;
-      processTrackingFrame(ctx, nx, ny, 0.0, 0.0, 0.28, 0.28, 0.03);
-    }
-    requestAnimationFrame(fallbackTrackingLoop);
   }
 
   function updateFPS() {
@@ -332,146 +315,326 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  function processTrackingFrame(ctx, nx, ny, yaw, pitch, earL, earR, mar) {
-    if (!neutralNose) {
-      neutralNose = { x: nx, y: ny };
-    }
-
-    // Dwell Accumulation Calculation
-    let dwellProgress = 0.0;
-    const now = performance.now();
-
-    if (isEngaged && now > dwellCooldownUntil) {
-      if (!dwellTargetPos) {
-        dwellTargetPos = { x: cursorX, y: cursorY };
-        dwellStartTime = now;
-      } else {
-        const dist = Math.hypot(cursorX - dwellTargetPos.x, cursorY - dwellTargetPos.y);
-        if (dist > 48.0) {
-          // Moved past target zone: reset to new anchor
-          dwellTargetPos = { x: cursorX, y: cursorY };
-          dwellStartTime = now;
-        } else {
-          const elapsed = (now - dwellStartTime) / 1000.0;
-          dwellProgress = Math.min(1.0, elapsed / 0.9);
-
-          // 100% DWELL CLICK TRIGGER
-          if (dwellProgress >= 1.0) {
-            executeDwellClick();
-            dwellProgress = 0.0;
-            dwellStartTime = null;
-            dwellTargetPos = null;
-            dwellCooldownUntil = now + 800; // 0.8s cooldown
-          }
-        }
-      }
+  // Recalibrate Neutral Center Anchor
+  btnStartCalibration?.addEventListener("click", () => {
+    if (lastNoseX !== null && lastNoseY !== null) {
+      neutralNose = { x: lastNoseX, y: lastNoseY };
     } else {
-      dwellStartTime = null;
-      dwellTargetPos = null;
+      neutralNose = { x: trackingCanvas.width / 2, y: trackingCanvas.height * 0.48 };
     }
-
-    // Draw on Camera Canvas Overlay
-    const dotColor = isEngaged ? "#10b981" : "#94a3b8";
-
-    // Green Tracking Dot on Nose Tip
-    ctx.beginPath();
-    ctx.arc(nx, ny, 7, 0, 2 * Math.PI);
-    ctx.fillStyle = dotColor;
-    ctx.fill();
-
-    // Resting Neutral Center in Yellow
-    if (neutralNose) {
-      ctx.beginPath();
-      ctx.arc(neutralNose.x, neutralNose.y, 4, 0, 2 * Math.PI);
-      ctx.strokeStyle = "rgba(245, 158, 11, 0.7)";
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
+    cursorX = window.innerWidth / 2;
+    cursorY = window.innerHeight / 2;
+    if (virtualCursor) {
+      virtualCursor.style.left = `${cursorX}px`;
+      virtualCursor.style.top = `${cursorY}px`;
     }
+    triggerActionToast("Center Position Calibrated 🎯");
+    playTone(1320, 60);
+    setTimeout(() => playTone(1760, 80), 80);
+  });
 
-    // 360° Circular Dwell Accumulator Ring around Nose Tip
-    if (isEngaged && dwellProgress > 0.04) {
-      ctx.beginPath();
-      ctx.arc(nx, ny, 20, -Math.PI / 2, -Math.PI / 2 + dwellProgress * 2 * Math.PI);
-      ctx.strokeStyle = "#f59e0b";
-      ctx.lineWidth = 3;
-      ctx.stroke();
-    }
-
-    // Status Label in Canvas
-    ctx.font = "bold 13px system-ui, sans-serif";
-    ctx.fillStyle = isEngaged ? "#10b981" : "#f59e0b";
-    const statusText = isEngaged ? "ACCESS GRANTED (SHIFT TAP TO LOCK)" : "LOCKED (TAP SHIFT TO ENGAGE)";
-    ctx.fillText(statusText, 14, 26);
-
-    // Update Telemetry Metrics
-    valYaw.innerHTML = `${yaw > 0 ? "+" : ""}${yaw.toFixed(1)}&deg;`;
-    valPitch.innerHTML = `${pitch > 0 ? "+" : ""}${pitch.toFixed(1)}&deg;`;
-    meterYaw.style.width = `${Math.max(0, Math.min(100, (yaw + 30) / 60 * 100))}%`;
-    meterPitch.style.width = `${Math.max(0, Math.min(100, (pitch + 25) / 50 * 100))}%`;
-
-    valEarL.textContent = earL.toFixed(3);
-    valEarR.textContent = earR.toFixed(3);
-    meterEarL.style.width = `${Math.min(100, earL * 250)}%`;
-    meterEarR.style.width = `${Math.min(100, earR * 250)}%`;
-
-    const dwellVal = Math.round(dwellProgress * 100);
-    valDwellPercent.textContent = `${dwellVal}%`;
-    dwellBarFill.style.width = `${dwellVal}%`;
-
-    // Move Virtual Cursor across the Browser Window
-    if (isEngaged) {
-      const dx = (nx - neutralNose.x);
-      const dy = (ny - neutralNose.y);
-
-      // Pointer Acceleration Curve (swift reach across screen)
-      const absX = Math.abs(dx);
-      const absY = Math.abs(dy);
-      const accelX = 1.0 + 0.025 * Math.min(absX, 40.0);
-      const accelY = 1.0 + 0.025 * Math.min(absY, 35.0);
-
-      const normX = Math.max(-1.0, Math.min(1.0, (dx / 46.0) * sensitivityMultiplier * accelX));
-      const normY = Math.max(-1.0, Math.min(1.0, (dy / 35.0) * sensitivityMultiplier * accelY));
-
-      const targetX = (normX * 0.5 + 0.5) * window.innerWidth;
-      const targetY = (normY * 0.5 + 0.5) * window.innerHeight;
-
-      // Smooth with Adaptive EMA filter
-      cursorX = cursorX * 0.25 + targetX * 0.75;
-      cursorY = cursorY * 0.25 + targetY * 0.75;
-
-      if (virtualCursor) {
-        virtualCursor.style.left = `${cursorX}px`;
-        virtualCursor.style.top = `${cursorY}px`;
+  // Main Render & Tracking Loop
+  function trackingRenderLoop() {
+    if (clientVideo && clientVideo.readyState >= 2) {
+      updateFPS();
+      const ctx = trackingCanvas.getContext("2d");
+      const vw = clientVideo.videoWidth || 640;
+      const vh = clientVideo.videoHeight || 480;
+      if (trackingCanvas.width !== vw || trackingCanvas.height !== vh) {
+        trackingCanvas.width = vw;
+        trackingCanvas.height = vh;
       }
 
-      // Check Facial Gestures
-      if (now - lastActionTime > 1200) {
-        // Left Wink -> Click
-        if (earL < 0.17 && earR >= 0.23) {
-          executeDwellClick();
-          triggerActionToast("Left Wink -> Click");
-          lastActionTime = now;
+      const w = trackingCanvas.width;
+      const h = trackingCanvas.height;
+
+      // STEP 1: ALWAYS RENDER THE USER'S LIVE WEBCAM VIDEO (Horizontally Mirrored)
+      ctx.save();
+      ctx.translate(w, 0);
+      ctx.scale(-1, 1);
+      ctx.drawImage(clientVideo, 0, 0, w, h);
+      ctx.restore();
+
+      // STEP 2: SEND VIDEO FRAME TO FACEMESH IF TRACKING IS ENABLED
+      if (isTracking && faceMesh && !isProcessingMesh) {
+        isProcessingMesh = true;
+        faceMesh.send({ image: clientVideo })
+          .catch((e) => console.warn("FaceMesh send error:", e))
+          .finally(() => { isProcessingMesh = false; });
+      }
+
+      const now = performance.now();
+
+      // STEP 3: IF TRACKING IS PAUSED VIA CONTROLLER
+      if (!isTracking) {
+        // Dark translucent overlay
+        ctx.fillStyle = "rgba(11, 15, 25, 0.72)";
+        ctx.fillRect(0, 0, w, h);
+
+        // Paused Banner
+        ctx.fillStyle = "#ef4444";
+        ctx.font = "bold 18px system-ui, sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("⏸️ TRACKING CONTROLLER PAUSED", w / 2, h / 2 - 10);
+        ctx.font = "14px system-ui, sans-serif";
+        ctx.fillStyle = "#cbd5e1";
+        ctx.fillText("Click 'Tracking Controller' in top navigation to resume", w / 2, h / 2 + 18);
+        ctx.textAlign = "left";
+
+        cameraStatusDot.className = "status-indicator searching";
+        if (virtualCursor) virtualCursor.classList.remove("active");
+        requestAnimationFrame(trackingRenderLoop);
+        return;
+      }
+
+      // STEP 4: ACTIVE TRACKING WITH FACIAL LANDMARKS
+      const isFaceFresh = lastLandmarks && (now - lastLandmarkTimestamp < 650);
+
+      if (isFaceFresh) {
+        cameraStatusDot.className = "status-indicator active";
+        const lm = lastLandmarks;
+
+        // Horizontally mirrored coordinates matching the mirrored selfie view:
+        // Landmark 4 is the nose tip
+        const nx = (1.0 - lm[4].x) * w;
+        const ny = lm[4].y * h;
+        lastNoseX = nx;
+        lastNoseY = ny;
+
+        if (!neutralNose) {
+          neutralNose = { x: nx, y: ny };
         }
-        // Mouth Open -> Scroll Down
-        else if (mar > 0.44) {
-          window.scrollBy({ top: 180, behavior: "smooth" });
-          triggerActionToast("Mouth Open -> Scroll Down");
-          lastActionTime = now;
+
+        // Biometric Metrics Calculation
+        const earL = (pDist(lm[160], lm[144]) + pDist(lm[158], lm[153])) / (2.0 * pDist(lm[33], lm[133]));
+        const earR = (pDist(lm[385], lm[380]) + pDist(lm[387], lm[373])) / (2.0 * pDist(lm[362], lm[263]));
+        const mar = pDist(lm[13], lm[14]) / pDist(lm[78], lm[308]);
+
+        // Invert yaw sign to match mirrored selfie view
+        const rawYaw = ((lm[4].x - (lm[33].x + lm[263].x) / 2) * 120);
+        const yaw = -rawYaw;
+        const pitch = (((lm[4].y - (lm[33].y + lm[263].y) / 2) - 0.05) * 140);
+
+        // Update HTML Telemetry Bars
+        valYaw.innerHTML = `${yaw > 0 ? "+" : ""}${yaw.toFixed(1)}&deg;`;
+        valPitch.innerHTML = `${pitch > 0 ? "+" : ""}${pitch.toFixed(1)}&deg;`;
+        meterYaw.style.width = `${Math.max(0, Math.min(100, (yaw + 30) / 60 * 100))}%`;
+        meterPitch.style.width = `${Math.max(0, Math.min(100, (pitch + 25) / 50 * 100))}%`;
+        valEarL.textContent = earL.toFixed(3);
+        valEarR.textContent = earR.toFixed(3);
+        meterEarL.style.width = `${Math.min(100, earL * 250)}%`;
+        meterEarR.style.width = `${Math.min(100, earR * 250)}%`;
+
+        // Calculate Head Deviation from Neutral Anchor
+        const dx = nx - neutralNose.x;
+        const dy = ny - neutralNose.y;
+        const distFromNeutral = Math.hypot(dx, dy);
+
+        // DRAW VISUAL FEEDBACK ON CANVAS:
+        // 1. Subtle Facial Geometry Points (Eyes & Mouth)
+        const eyeL_x = (1.0 - lm[33].x) * w;
+        const eyeL_y = lm[33].y * h;
+        const eyeR_x = (1.0 - lm[263].x) * w;
+        const eyeR_y = lm[263].y * h;
+        const mouth_x = (1.0 - lm[13].x) * w;
+        const mouth_y = lm[13].y * h;
+
+        ctx.fillStyle = "rgba(56, 189, 248, 0.6)";
+        [ [eyeL_x, eyeL_y], [eyeR_x, eyeR_y], [mouth_x, mouth_y] ].forEach(([px, py]) => {
+          ctx.beginPath();
+          ctx.arc(px, py, 3, 0, 2 * Math.PI);
+          ctx.fill();
+        });
+
+        // 2. Resting Neutral Center Anchor (Yellow Ring)
+        ctx.beginPath();
+        ctx.arc(neutralNose.x, neutralNose.y, 6, 0, 2 * Math.PI);
+        ctx.strokeStyle = "rgba(245, 158, 11, 0.8)";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // 3. Direction Vector Line & Arrow (Showing Head Tilt)
+        if (distFromNeutral >= 6) {
+          ctx.beginPath();
+          ctx.moveTo(neutralNose.x, neutralNose.y);
+          ctx.lineTo(nx, ny);
+          ctx.strokeStyle = isEngaged ? "#10b981" : "#f59e0b";
+          ctx.lineWidth = 2.5;
+          ctx.stroke();
         }
+
+        // 4. Glowing Green Tracking Dot on Nose Tip
+        const dotColor = isEngaged ? "#10b981" : "#38bdf8";
+        ctx.beginPath();
+        ctx.arc(nx, ny, 7.5, 0, 2 * Math.PI);
+        ctx.fillStyle = dotColor;
+        ctx.fill();
+        ctx.strokeStyle = "#ffffff";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // 5. Direction HUD Banner (Top Left)
+        let dirLabel = "🎯 CENTER (Neutral)";
+        if (distFromNeutral >= 8) {
+          const horiz = dx > 8 ? "RIGHT ➡️" : (dx < -8 ? "LEFT ⬅️" : "");
+          const vert = dy > 8 ? "DOWN ⬇️" : (dy < -8 ? "UP ⬆️" : "");
+          dirLabel = [horiz, vert].filter(Boolean).join(" + ");
+        }
+
+        ctx.fillStyle = "rgba(15, 23, 42, 0.85)";
+        ctx.roundRect ? ctx.roundRect(12, 12, 270, 48, 8) : ctx.rect(12, 12, 270, 48);
+        ctx.fill();
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.15)";
+        ctx.stroke();
+
+        ctx.font = "bold 13px system-ui, sans-serif";
+        ctx.fillStyle = isEngaged ? "#10b981" : "#38bdf8";
+        ctx.fillText(`Motion: ${dirLabel}`, 22, 32);
+        ctx.font = "11px system-ui, sans-serif";
+        ctx.fillStyle = "#94a3b8";
+        ctx.fillText(`Yaw: ${yaw > 0 ? "+" : ""}${yaw.toFixed(1)}° | Pitch: ${pitch > 0 ? "+" : ""}${pitch.toFixed(1)}°`, 22, 50);
+
+        // 6. Clutch Engagement Badge (Top Right)
+        const clutchLabel = isEngaged ? "🟢 CONTROL ACTIVE" : "🔒 STANDBY (TAP SHIFT)";
+        const clutchColor = isEngaged ? "#10b981" : "#f59e0b";
+        ctx.fillStyle = "rgba(15, 23, 42, 0.85)";
+        const badgeW = 200;
+        ctx.roundRect ? ctx.roundRect(w - badgeW - 12, 12, badgeW, 32, 8) : ctx.rect(w - badgeW - 12, 12, badgeW, 32);
+        ctx.fill();
+        ctx.font = "bold 12px system-ui, sans-serif";
+        ctx.fillStyle = clutchColor;
+        ctx.fillText(clutchLabel, w - badgeW + 8, 32);
+
+        // 7. Dwell Click Accumulator Logic
+        let dwellProgress = 0.0;
+        if (isEngaged && now > dwellCooldownUntil) {
+          if (!dwellTargetPos) {
+            dwellTargetPos = { x: cursorX, y: cursorY };
+            dwellStartTime = now;
+          } else {
+            const cursorDist = Math.hypot(cursorX - dwellTargetPos.x, cursorY - dwellTargetPos.y);
+            if (cursorDist > 52.0) {
+              // User moved past anchor circle: reset anchor to new location
+              dwellTargetPos = { x: cursorX, y: cursorY };
+              dwellStartTime = now;
+            } else {
+              const elapsed = (now - dwellStartTime) / 1000.0;
+              dwellProgress = Math.min(1.0, elapsed / 0.95);
+
+              // 100% DWELL TRIGGERED
+              if (dwellProgress >= 1.0) {
+                executeDwellClick();
+                dwellProgress = 0.0;
+                dwellStartTime = null;
+                dwellTargetPos = null;
+                dwellCooldownUntil = now + 850;
+              }
+            }
+          }
+        } else {
+          dwellStartTime = null;
+          dwellTargetPos = null;
+        }
+
+        // Draw 360° Circular Dwell Accumulator Ring on Canvas
+        if (isEngaged && dwellProgress > 0.03) {
+          ctx.beginPath();
+          ctx.arc(nx, ny, 22, -Math.PI / 2, -Math.PI / 2 + dwellProgress * 2 * Math.PI);
+          ctx.strokeStyle = "#f59e0b";
+          ctx.lineWidth = 3.5;
+          ctx.stroke();
+        }
+
+        const dwellPercent = Math.round(dwellProgress * 100);
+        valDwellPercent.textContent = `${dwellPercent}%`;
+        dwellBarFill.style.width = `${dwellPercent}%`;
+
+        // 8. Virtual Cursor Steering Across Window
+        if (isEngaged) {
+          // Swift non-linear response curve
+          const absX = Math.abs(dx);
+          const absY = Math.abs(dy);
+          const accelX = 1.0 + 0.02 * Math.min(absX, 50.0);
+          const accelY = 1.0 + 0.02 * Math.min(absY, 40.0);
+
+          const normX = Math.max(-1.0, Math.min(1.0, (dx / 44.0) * sensitivityMultiplier * accelX));
+          const normY = Math.max(-1.0, Math.min(1.0, (dy / 34.0) * sensitivityMultiplier * accelY));
+
+          const targetX = (normX * 0.5 + 0.5) * window.innerWidth;
+          const targetY = (normY * 0.5 + 0.5) * window.innerHeight;
+
+          // Smooth exponential moving average
+          cursorX = cursorX * 0.28 + targetX * 0.72;
+          cursorY = cursorY * 0.28 + targetY * 0.72;
+
+          if (virtualCursor) {
+            virtualCursor.style.left = `${cursorX}px`;
+            virtualCursor.style.top = `${cursorY}px`;
+            virtualCursor.classList.add("active");
+          }
+
+          // Facial Gestures (Wink & Mouth Open)
+          if (now - lastActionTime > 1300) {
+            if (earL < 0.17 && earR >= 0.23) {
+              executeDwellClick();
+              triggerActionToast("Left Wink -> Click");
+              lastActionTime = now;
+            } else if (mar > 0.45) {
+              window.scrollBy({ top: 180, behavior: "smooth" });
+              triggerActionToast("Mouth Open -> Scroll Down");
+              lastActionTime = now;
+            }
+          }
+        } else {
+          // Disengaged (Safety Standby)
+          if (virtualCursor) virtualCursor.classList.remove("active");
+        }
+
+      } else {
+        // NO FACE DETECTED: Show search guide & NEVER move the cursor!
+        cameraStatusDot.className = "status-indicator searching";
+        valDwellPercent.textContent = "0%";
+        dwellBarFill.style.width = "0%";
+
+        // Draw face placement oval
+        ctx.save();
+        ctx.strokeStyle = "rgba(245, 158, 11, 0.75)";
+        ctx.lineWidth = 2.5;
+        ctx.setLineDash([8, 6]);
+        ctx.beginPath();
+        ctx.ellipse(w / 2, h / 2, w * 0.22, h * 0.35, 0, 0, 2 * Math.PI);
+        ctx.stroke();
+        ctx.restore();
+
+        // Overlay Message
+        ctx.fillStyle = "rgba(15, 23, 42, 0.85)";
+        ctx.roundRect ? ctx.roundRect(w / 2 - 160, h - 54, 320, 38, 8) : ctx.rect(w / 2 - 160, h - 54, 320, 38);
+        ctx.fill();
+
+        ctx.font = "bold 13px system-ui, sans-serif";
+        ctx.fillStyle = "#f59e0b";
+        ctx.textAlign = "center";
+        ctx.fillText("👁️ Please center your face in the camera frame", w / 2, h - 30);
+        ctx.textAlign = "left";
+
+        // Virtual cursor remains inactive when face is not seen
+        if (virtualCursor) virtualCursor.classList.remove("active");
       }
     }
+
+    requestAnimationFrame(trackingRenderLoop);
   }
 
   function executeDwellClick() {
     playTone(1600, 50); // Crisp click chime
-    triggerActionToast("Dwell -> LEFT_CLICK");
+    triggerActionToast("Dwell -> CLICK");
 
     if (virtualCursor) {
       virtualCursor.classList.add("clicking");
       setTimeout(() => virtualCursor.classList.remove("clicking"), 250);
     }
 
-    // Click the actual element under the cursor!
+    // Dispatch real click event to element under virtual cursor
     const targetEl = document.elementFromPoint(cursorX, cursorY);
     if (targetEl && typeof targetEl.click === "function") {
       targetEl.click();
