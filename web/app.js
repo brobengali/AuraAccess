@@ -873,7 +873,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (systemModeBanner) {
       systemModeBanner.className = "system-mode-banner cloud-mode";
       if (systemModeBadge) systemModeBadge.textContent = "🌐 WEB PREVIEW MODE";
-      if (systemModeDesc) systemModeDesc.innerHTML = "In-Browser Web Showcase. Browser security policies sandbox websites inside tabs. For full Windows desktop control over external apps (Spotify, Word, Desktop icons), run <strong>START_AURA_ACCESS.bat</strong> on your PC.";
+      if (systemModeDesc) systemModeDesc.innerHTML = "In-Browser Web Showcase. Full hands-free tracking and dwell click active.";
     }
     initWebcam();
   }
