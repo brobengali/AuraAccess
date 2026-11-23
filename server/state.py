@@ -7,8 +7,10 @@ Features:
 - Attaches to WinSta0\\default desktop station for physical cursor interaction.
 """
 
+import os
 import time
 import threading
+from pathlib import Path
 import cv2
 import numpy as np
 from typing import Optional, Dict, Any, List
